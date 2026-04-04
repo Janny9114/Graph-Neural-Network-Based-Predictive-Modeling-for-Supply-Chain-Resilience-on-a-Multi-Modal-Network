@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { useEffect, useState } from "react";
+import Papa from "papaparse";
 
 const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
@@ -11,6 +13,33 @@ interface Location {
   coordinates: [number, number];
   riskLevel: "Low" | "Medium" | "High" | "Critical";
   status: string;
+  tier?: number;
+  region?: string;
+  capacity?: number;
+  cost_factor?: number;
+  base_risk?: number;
+  risk_level?: number;
+}
+
+interface NodeData {
+  node_id: string;
+  tier: number;
+  region: string;
+  x: number;
+  y: number;
+  capacity: number;
+  cost_factor: number;
+  base_risk: number;
+  risk_level: number;
+}
+
+interface EdgeData {
+  source: string;
+  target: string;
+  lead_time: number;
+  transport_cost: number;
+  capacity_share: number;
+  disruption_probability: number;
 }
 
 const locations: Location[] = [
@@ -51,6 +80,75 @@ const connections = [
 ];
 
 export function WorldMapNetwork() {
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [connections, setConnections] = useState<{from: string, to: string}[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Load nodes data
+    Papa.parse('/synthetic_nodes.csv', {
+      download: true,
+      header: true,
+      complete: (results) => {
+        const nodes = results.data as NodeData[];
+        
+        // Convert nodes to Location format
+        const loadedLocations: Location[] = nodes
+          .filter(node => node.node_id && node.x && node.y) // Filter out invalid rows
+          .map(node => {
+            const tierType = 
+              node.tier === 0 ? "supplier" :
+              node.tier === 1 ? "supplier" :
+              node.tier === 2 ? "distribution" :
+              "manufacturer";
+            
+            const riskLevel = 
+              node.risk_level < 0.3 ? "Low" :
+              node.risk_level < 0.6 ? "Medium" :
+              node.risk_level < 0.9 ? "High" :
+              "Critical";
+            
+            return {
+              id: node.node_id,
+              name: `${node.region} Node ${node.node_id}`,
+              type: tierType,
+              coordinates: [node.x, node.y] as [number, number],
+              riskLevel: riskLevel,
+              status: riskLevel === "Critical" ? "Risk Alert" : riskLevel === "High" ? "Delayed" : "Active",
+              tier: node.tier,
+              region: node.region,
+              capacity: node.capacity,
+              cost_factor: node.cost_factor,
+              base_risk: node.base_risk,
+              risk_level: node.risk_level
+            };
+          });
+        
+        setLocations(loadedLocations);
+        
+        // Load edges data
+        Papa.parse('/synthetic_edges.csv', {
+          download: true,
+          header: true,
+          complete: (edgeResults) => {
+            const edges = edgeResults.data as EdgeData[];
+            
+            // Convert edges to connections format
+            const loadedConnections = edges
+              .filter(edge => edge.source && edge.target)
+              .map(edge => ({
+                from: edge.source,
+                to: edge.target
+              }));
+            
+            setConnections(loadedConnections);
+            setLoading(false);
+          }
+        });
+      }
+    });
+  }, []);
+
   const getRiskColor = (riskLevel: string) => {
     switch (riskLevel) {
       case "Low":
@@ -191,13 +289,17 @@ export function WorldMapNetwork() {
                   <TooltipContent>
                     <div className="text-sm">
                       <p className="font-semibold">{location.name}</p>
-                      <p className="text-xs text-muted-foreground capitalize">{location.type}</p>
+                      <p className="text-xs text-muted-foreground capitalize">
+                        {location.type} | Tier {location.tier}
+                      </p>
+                      <p className="text-xs">Region: {location.region}</p>
                       <p className="text-xs">Risk: <span className={
                         location.riskLevel === "Low" ? "text-green-600" :
                         location.riskLevel === "Medium" ? "text-yellow-600" :
                         location.riskLevel === "High" ? "text-orange-600" :
                         "text-red-600"
-                      }>{location.riskLevel}</span></p>
+                      }>{location.riskLevel} ({(location.risk_level! * 100).toFixed(1)}%)</span></p>
+                      <p className="text-xs">Capacity: {location.capacity?.toFixed(0)}</p>
                       <p className="text-xs">Status: {location.status}</p>
                     </div>
                   </TooltipContent>
