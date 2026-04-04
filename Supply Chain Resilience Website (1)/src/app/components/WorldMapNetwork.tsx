@@ -9,7 +9,7 @@ const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 interface Location {
   id: string;
   name: string;
-  type: "supplier" | "manufacturer" | "distribution";
+  type: "supplier" | "manufacturer" | "distribution" | "retailer";
   coordinates: [number, number];
   riskLevel: "Low" | "Medium" | "High" | "Critical";
   status: string;
@@ -99,14 +99,14 @@ export function WorldMapNetwork() {
           .map(node => {
             const tierType = 
               Number(node.tier) === 0 ? "supplier" :
-              Number(node.tier) === 1 ? "supplier" :
+              Number(node.tier) === 1 ? "manufacturer" :
               Number(node.tier) === 2 ? "distribution" :
-              "manufacturer";
+              "retailer";
             
             const riskLevel = 
-              Number(node.risk_level) < 0.3 ? "Low" :
-              Number(node.risk_level) < 0.6 ? "Medium" :
-              Number(node.risk_level) < 0.9 ? "High" :
+              Number(node.base_risk) < 0.3 ? "Low" :
+              Number(node.base_risk) < 0.6 ? "Medium" :
+              Number(node.base_risk) < 0.9 ? "High" :
               "Critical";
             
             return {
@@ -173,11 +173,13 @@ export function WorldMapNetwork() {
 
   const getNodeSize = (type: string) => {
     switch (type) {
+      case "supplier":
+        return 10;
       case "manufacturer":
         return 12;
-      case "supplier":
-        return 8;
       case "distribution":
+        return 8;
+      case "retailer":
         return 6;
       default:
         return 6;
@@ -300,12 +302,13 @@ export function WorldMapNetwork() {
                         {location.type} | Tier {location.tier}
                       </p>
                       <p className="text-xs">Region: {location.region}</p>
-                      <p className="text-xs">Risk: <span className={
+                      <p className="text-xs">Base Risk: <span className={
                         location.riskLevel === "Low" ? "text-green-600" :
                         location.riskLevel === "Medium" ? "text-yellow-600" :
                         location.riskLevel === "High" ? "text-orange-600" :
                         "text-red-600"
-                      }>{location.riskLevel} ({(location.risk_level! * 100).toFixed(1)}%)</span></p>
+                      }>{location.riskLevel} ({(location.base_risk! * 100).toFixed(1)}%)</span></p>
+                      <p className="text-xs">Adjusted Risk: {(location.risk_level! * 100).toFixed(1)}%</p>
                       <p className="text-xs">Capacity: {location.capacity?.toFixed(0)}</p>
                       <p className="text-xs">Status: {location.status}</p>
                     </div>
@@ -336,16 +339,20 @@ export function WorldMapNetwork() {
           </div>
           <div className="ml-auto flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-blue-600 border-2 border-white"></div>
-              <span>Manufacturer</span>
+              <div className="w-[10px] h-[10px] rounded-full bg-purple-600 border-2 border-white"></div>
+              <span>Supplier (Tier 0)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-gray-600"></div>
-              <span>Supplier</span>
+              <div className="w-3 h-3 rounded-full bg-blue-600 border-2 border-white"></div>
+              <span>Manufacturer (Tier 1)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-gray-600"></div>
-              <span>Distribution</span>
+              <div className="w-2 h-2 rounded-full bg-green-600"></div>
+              <span>Distributor (Tier 2)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-[6px] h-[6px] rounded-full bg-orange-600"></div>
+              <span>Retailer (Tier 3)</span>
             </div>
           </div>
         </div>

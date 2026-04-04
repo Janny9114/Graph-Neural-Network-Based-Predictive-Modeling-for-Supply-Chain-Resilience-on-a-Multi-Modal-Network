@@ -163,9 +163,9 @@ def generate_node_features(
     regions = assign_regions(num_nodes, region_names)
 
     base_capacity = {
-        0: (800, 200),
-        1: (600, 150),
-        2: (400, 100),
+        0: (1000, 200),
+        1: (700, 150),
+        2: (500, 100),
         3: (200, 80)
     }
     base_risk = {
