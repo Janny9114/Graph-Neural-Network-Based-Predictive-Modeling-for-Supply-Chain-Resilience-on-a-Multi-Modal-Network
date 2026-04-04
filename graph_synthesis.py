@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import networkx as nx
+import geopandas as gpd
+from shapely.geometry import Point
 from typing import Dict, Any, List, Tuple
 
 def set_random_seed(seed: int = 42):
@@ -31,49 +33,127 @@ def assign_regions(num_nodes: int, region_names: List[str]) -> List[str]:
     """
     return list(np.random.choice(region_names, size=num_nodes))
 
+def get_country_boundaries():
+    """
+    Load world country boundaries using geopandas natural earth data.
+    Returns a GeoDataFrame with country geometries.
+    """
+    try:
+        # Download and load natural earth low resolution country boundaries directly
+        url = "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+        world = gpd.read_file(url)
+        return world
+    except Exception as e:
+        print(f"Warning: Could not load natural earth data: {e}")
+        return None
+
 def generate_zone_coordinates(regions: List[str], region_names: List[str]) -> Tuple[List[float], List[float]]:
     """
-    Generate randomized x and y coordinates for nodes based on their zone/region.
-    Each region has a designated area, and nodes are randomly placed within that area.
+    Generate realistic geographic coordinates for nodes based on their country/region.
+    Uses geopandas to get actual country boundaries and places nodes within them.
     
     Args:
         regions: List of region assignments for each node
         region_names: List of all possible region names
         
     Returns:
-        Tuple of (x_coordinates, y_coordinates)
+        Tuple of (longitude_coordinates, latitude_coordinates)
     """
-    # Define zone centers and spreads for each region
-    # Each region gets a distinct area in 2D space
-    num_regions = len(region_names)
+    # Load world boundaries
+    world = get_country_boundaries()
     
-    # Create a grid layout for regions
-    grid_size = int(np.ceil(np.sqrt(num_regions)))
-    region_centers = {}
-    
-    for idx, region in enumerate(region_names):
-        row = idx // grid_size
-        col = idx % grid_size
-        # Each region center is spaced 100 units apart
-        center_x = col * 100
-        center_y = row * 100
-        region_centers[region] = (center_x, center_y)
+    # Map region names to country names in natural earth dataset
+    region_to_country = {
+        "China 3": "China",
+        "Norway": "Norway",
+        "Mexico": "Mexico",
+        "Panama": "Panama",
+        "United States 1": "United States of America"
+    }
     
     # Generate coordinates for each node
-    x_coords = []
-    y_coords = []
+    lon_coords = []
+    lat_coords = []
     
-    for region in regions:
-        center_x, center_y = region_centers.get(region, (0, 0))
+    if world is not None:
+        # Check which column name is used for country names
+        name_column = None
+        for col in ['name', 'NAME', 'ADMIN', 'NAME_EN', 'SOVEREIGNT']:
+            if col in world.columns:
+                name_column = col
+                break
         
-        # Add random offset within the region (±40 units from center)
-        x = center_x + np.random.uniform(-40, 40)
-        y = center_y + np.random.uniform(-40, 40)
+        if name_column is None:
+            print("Could not find country name column, using fallback...")
+            world = None
         
-        x_coords.append(x)
-        y_coords.append(y)
+        for region in regions:
+            if world is None:
+                break
+                
+            country_name = region_to_country.get(region, region)
+            
+            # Get the country geometry
+            country_geom = world[world[name_column] == country_name]
+            
+            if not country_geom.empty:
+                # Get the country's bounding box
+                bounds = country_geom.total_bounds  # [minx, miny, maxx, maxy]
+                geometry = country_geom.geometry.iloc[0]
+                
+                # Generate random points within the country boundary
+                max_attempts = 100
+                for attempt in range(max_attempts):
+                    # Random point within bounding box
+                    lon = np.random.uniform(bounds[0], bounds[2])
+                    lat = np.random.uniform(bounds[1], bounds[3])
+                    point = Point(lon, lat)
+                    
+                    # Check if point is within country boundary
+                    if geometry.contains(point):
+                        lon_coords.append(lon)
+                        lat_coords.append(lat)
+                        break
+                else:
+                    # If we couldn't find a point inside, use centroid
+                    centroid = geometry.centroid
+                    lon_coords.append(centroid.x)
+                    lat_coords.append(centroid.y)
+            else:
+                # Fallback: use approximate coordinates if country not found
+                fallback_coords = {
+                    "China": (105.0, 35.0),
+                    "Norway": (10.0, 60.0),
+                    "Mexico": (-102.0, 23.0),
+                    "Panama": (-80.0, 9.0),
+                    "United States of America": (-95.0, 37.0)
+                }
+                lon, lat = fallback_coords.get(country_name, (0.0, 0.0))
+                # Add some random offset
+                lon += np.random.uniform(-5, 5)
+                lat += np.random.uniform(-3, 3)
+                lon_coords.append(lon)
+                lat_coords.append(lat)
+    else:
+        # Fallback if geopandas data not available
+        print("Using fallback coordinate generation...")
+        fallback_coords = {
+            "China 3": (105.0, 35.0),
+            "Norway": (10.0, 60.0),
+            "Mexico": (-102.0, 23.0),
+            "Panama": (-80.0, 9.0),
+            "United States 1": (-95.0, 37.0)
+        }
+        
+        for region in regions:
+            lon, lat = fallback_coords.get(region, (0.0, 0.0))
+            # Add random offset within ~500km
+            lon += np.random.uniform(-5, 5)
+            lat += np.random.uniform(-3, 3)
+            lon_coords.append(lon)
+            lat_coords.append(lat)
     
-    return x_coords, y_coords
+    return lon_coords, lat_coords
 
 def generate_node_features(
     tier_index: int,
