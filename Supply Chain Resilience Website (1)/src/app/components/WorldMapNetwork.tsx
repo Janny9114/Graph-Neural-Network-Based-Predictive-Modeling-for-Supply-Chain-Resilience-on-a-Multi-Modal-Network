@@ -80,8 +80,8 @@ const connections = [
 ];
 
 export function WorldMapNetwork() {
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [connections, setConnections] = useState<{from: string, to: string}[]>([]);
+  const [dynamicLocations, setDynamicLocations] = useState<Location[]>([]);
+  const [dynamicConnections, setDynamicConnections] = useState<{from: string, to: string}[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -89,7 +89,8 @@ export function WorldMapNetwork() {
     Papa.parse('/synthetic_nodes.csv', {
       download: true,
       header: true,
-      complete: (results) => {
+      complete: (results: any) => {
+        console.log('CSV loaded:', results);
         const nodes = results.data as NodeData[];
         
         // Convert nodes to Location format
@@ -97,40 +98,41 @@ export function WorldMapNetwork() {
           .filter(node => node.node_id && node.x && node.y) // Filter out invalid rows
           .map(node => {
             const tierType = 
-              node.tier === 0 ? "supplier" :
-              node.tier === 1 ? "supplier" :
-              node.tier === 2 ? "distribution" :
+              Number(node.tier) === 0 ? "supplier" :
+              Number(node.tier) === 1 ? "supplier" :
+              Number(node.tier) === 2 ? "distribution" :
               "manufacturer";
             
             const riskLevel = 
-              node.risk_level < 0.3 ? "Low" :
-              node.risk_level < 0.6 ? "Medium" :
-              node.risk_level < 0.9 ? "High" :
+              Number(node.risk_level) < 0.3 ? "Low" :
+              Number(node.risk_level) < 0.6 ? "Medium" :
+              Number(node.risk_level) < 0.9 ? "High" :
               "Critical";
             
             return {
-              id: node.node_id,
+              id: String(node.node_id),
               name: `${node.region} Node ${node.node_id}`,
               type: tierType,
-              coordinates: [node.x, node.y] as [number, number],
+              coordinates: [Number(node.x), Number(node.y)] as [number, number],
               riskLevel: riskLevel,
               status: riskLevel === "Critical" ? "Risk Alert" : riskLevel === "High" ? "Delayed" : "Active",
-              tier: node.tier,
-              region: node.region,
-              capacity: node.capacity,
-              cost_factor: node.cost_factor,
-              base_risk: node.base_risk,
-              risk_level: node.risk_level
+              tier: Number(node.tier),
+              region: String(node.region),
+              capacity: Number(node.capacity),
+              cost_factor: Number(node.cost_factor),
+              base_risk: Number(node.base_risk),
+              risk_level: Number(node.risk_level)
             };
           });
         
-        setLocations(loadedLocations);
+        console.log('Loaded locations:', loadedLocations.length);
+        setDynamicLocations(loadedLocations);
         
         // Load edges data
         Papa.parse('/synthetic_edges.csv', {
           download: true,
           header: true,
-          complete: (edgeResults) => {
+          complete: (edgeResults: any) => {
             const edges = edgeResults.data as EdgeData[];
             
             // Convert edges to connections format
@@ -141,13 +143,18 @@ export function WorldMapNetwork() {
                 to: edge.target
               }));
             
-            setConnections(loadedConnections);
+            console.log('Loaded connections:', loadedConnections.length);
+            setDynamicConnections(loadedConnections);
             setLoading(false);
           }
         });
       }
     });
   }, []);
+
+  // Use dynamic data if loaded, otherwise fall back to static data
+  const displayLocations = dynamicLocations.length > 0 ? dynamicLocations : locations;
+  const displayConnections = dynamicConnections.length > 0 ? dynamicConnections : connections;
 
   const getRiskColor = (riskLevel: string) => {
     switch (riskLevel) {
@@ -211,8 +218,8 @@ export function WorldMapNetwork() {
             className="w-full h-full"
           >
             <Geographies geography={geoUrl}>
-              {({ geographies }) =>
-                geographies.map((geo) => (
+              {({ geographies }: any) =>
+                geographies.map((geo: any) => (
                   <Geography
                     key={geo.rsmKey}
                     geography={geo}
@@ -230,9 +237,9 @@ export function WorldMapNetwork() {
             </Geographies>
 
             {/* Draw connections first (so they appear behind nodes) */}
-            {connections.map((connection, i) => {
-              const fromLocation = locations.find(loc => loc.id === connection.from);
-              const toLocation = locations.find(loc => loc.id === connection.to);
+            {displayConnections.map((connection, i) => {
+              const fromLocation = displayLocations.find(loc => loc.id === connection.from);
+              const toLocation = displayLocations.find(loc => loc.id === connection.to);
               
               if (!fromLocation || !toLocation) return null;
 
@@ -254,7 +261,7 @@ export function WorldMapNetwork() {
             })}
 
             {/* Draw nodes */}
-            {locations.map((location) => (
+            {displayLocations.map((location) => (
               <Marker key={location.id} coordinates={location.coordinates}>
                 <Tooltip>
                   <TooltipTrigger asChild>
