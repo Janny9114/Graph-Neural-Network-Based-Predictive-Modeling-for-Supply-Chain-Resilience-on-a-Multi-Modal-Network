@@ -17,7 +17,6 @@ interface Location {
   region?: string;
   capacity?: number;
   cost_factor?: number;
-  base_risk?: number;
   risk_level?: number;
 }
 
@@ -120,8 +119,7 @@ export function WorldMapNetwork() {
               region: String(node.region),
               capacity: Number(node.capacity),
               cost_factor: Number(node.cost_factor),
-              base_risk: Number(node.base_risk),
-              risk_level: Number(node.risk_level)
+              risk_level: Number(node.base_risk)
             };
           });
         
@@ -302,13 +300,12 @@ export function WorldMapNetwork() {
                         {location.type} | Tier {location.tier}
                       </p>
                       <p className="text-xs">Region: {location.region}</p>
-                      <p className="text-xs">Base Risk: <span className={
+                      <p className="text-xs">Risk Level: <span className={
                         location.riskLevel === "Low" ? "text-green-600" :
                         location.riskLevel === "Medium" ? "text-yellow-600" :
                         location.riskLevel === "High" ? "text-orange-600" :
                         "text-red-600"
-                      }>{location.riskLevel} ({(location.base_risk! * 100).toFixed(1)}%)</span></p>
-                      <p className="text-xs">Adjusted Risk: {(location.risk_level! * 100).toFixed(1)}%</p>
+                      }>{location.riskLevel} ({(location.risk_level! * 100).toFixed(1)}%)</span></p>
                       <p className="text-xs">Capacity: {location.capacity?.toFixed(0)}</p>
                       <p className="text-xs">Status: {location.status}</p>
                     </div>

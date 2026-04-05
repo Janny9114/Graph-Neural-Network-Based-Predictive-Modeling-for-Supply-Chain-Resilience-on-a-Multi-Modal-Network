@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 import networkx as nx
 import matplotlib.pyplot as plt
 from torch_geometric.utils import to_networkx
+from graph_preprocessing import preprocess_supply_chain_data
 
 
 def load_synthetic_data(
@@ -37,7 +38,6 @@ def prepare_node_features(node_df: pd.DataFrame) -> torch.Tensor:
     - tier (normalized)
     - capacity (normalized)
     - cost_factor
-    - base_risk
     - risk_level
     
     Args:
@@ -47,7 +47,7 @@ def prepare_node_features(node_df: pd.DataFrame) -> torch.Tensor:
         Tensor of shape [num_nodes, num_features]
     """
     # Select numerical features
-    feature_columns = ['tier', 'capacity', 'cost_factor', 'base_risk', 'risk_level']
+    feature_columns = ['tier', 'capacity', 'cost_factor', 'risk_level']
     
     # Extract features
     features = node_df[feature_columns].values
@@ -155,6 +155,7 @@ def encode_regions(node_df: pd.DataFrame) -> tuple[torch.Tensor, Dict[str, int]]
 def create_gnn_graph(
     node_path: str = "synthetic_nodes.csv",
     edge_path: str = "synthetic_edges.csv",
+    use_preprocessing: bool = True,
     include_edge_features: bool = True
 ) -> Data:
     """
@@ -163,6 +164,7 @@ def create_gnn_graph(
     Args:
         node_path: Path to the nodes CSV file
         edge_path: Path to the edges CSV file
+        use_preprocessing: Whether to use advanced preprocessing (Z-score, log transform)
         include_edge_features: Whether to include edge attributes
         
     Returns:
@@ -171,44 +173,89 @@ def create_gnn_graph(
     # Load data
     node_df, edge_df = load_synthetic_data(node_path, edge_path)
     
-    # Prepare node features
-    x = prepare_node_features(node_df)
+    if use_preprocessing:
+        # Use advanced preprocessing with Z-score standardization and flow constraints
+        print("\n" + "="*70)
+        print("Using Advanced Preprocessing (Z-score + Flow Constraints)")
+        print("="*70)
+        
+        processed_node_df, standardized_node_features, standardized_edge_flows = preprocess_supply_chain_data(
+            node_df, edge_df,
+            adjust_capacity=True,
+            verify_constraints=True,
+            verbose=True
+        )
+        
+        # Convert to PyTorch tensors
+        x = torch.tensor(standardized_node_features, dtype=torch.float32)
+        edge_index = prepare_edge_index(edge_df)
+        edge_attr = torch.tensor(standardized_edge_flows, dtype=torch.float32).unsqueeze(1)
+        
+        # Encode regions
+        region_labels, region_mapping = encode_regions(node_df)
+        
+        # Create PyTorch Geometric Data object
+        data = Data(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            region=region_labels,
+            num_nodes=len(node_df)
+        )
+        
+        # Store metadata
+        data.region_mapping = region_mapping
+        data.node_df = node_df
+        data.processed_node_df = processed_node_df
+        data.edge_df = edge_df
+        data.preprocessing_used = True
+        
+    else:
+        # Use basic preprocessing (original method)
+        print("\n" + "="*70)
+        print("Using Basic Preprocessing (Min-Max Normalization)")
+        print("="*70)
+        
+        # Prepare node features
+        x = prepare_node_features(node_df)
+        
+        # Prepare edge index
+        edge_index = prepare_edge_index(edge_df)
+        
+        # Prepare edge features (optional)
+        edge_attr = None
+        if include_edge_features:
+            edge_attr = prepare_edge_features(edge_df)
+        
+        # Encode regions
+        region_labels, region_mapping = encode_regions(node_df)
+        
+        # Create PyTorch Geometric Data object
+        data = Data(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            region=region_labels,
+            num_nodes=len(node_df)
+        )
+        
+        # Store metadata
+        data.region_mapping = region_mapping
+        data.node_df = node_df
+        data.edge_df = edge_df
+        data.preprocessing_used = False
     
-    # Prepare edge index
-    edge_index = prepare_edge_index(edge_df)
-    
-    # Prepare edge features (optional)
-    edge_attr = None
-    if include_edge_features:
-        edge_attr = prepare_edge_features(edge_df)
-    
-    # Encode regions
-    region_labels, region_mapping = encode_regions(node_df)
-    
-    # Create PyTorch Geometric Data object
-    data = Data(
-        x=x,
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-        region=region_labels,
-        num_nodes=len(node_df)
-    )
-    
-    # Store metadata
-    data.region_mapping = region_mapping
-    data.node_df = node_df
-    data.edge_df = edge_df
-    
-    print("\n" + "="*50)
-    print("GNN Graph Construction Complete!")
-    print("="*50)
+    print("\n" + "="*70)
+    print("GNN GRAPH CONSTRUCTION COMPLETE!")
+    print("="*70)
     print(f"Number of nodes: {data.num_nodes}")
     print(f"Number of edges: {data.edge_index.shape[1]}")
     print(f"Node feature dimension: {data.x.shape[1]}")
-    if edge_attr is not None:
+    if data.edge_attr is not None:
         print(f"Edge feature dimension: {data.edge_attr.shape[1]}")
     print(f"Number of regions: {len(region_mapping)}")
-    print("="*50)
+    print(f"Preprocessing method: {'Advanced (Z-score + Flow)' if use_preprocessing else 'Basic (Min-Max)'}")
+    print("="*70)
     
     return data
 

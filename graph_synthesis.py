@@ -20,7 +20,7 @@ def generate_tier_sizes(
     if tier_scaling is None:
         # Example: suppliers > manufacturers > distributors > retailers
         # scaling factors for each tier; multiply by base_per_tier
-        tier_scaling = [3.0, 2.5, 2.0, 2.5]
+        tier_scaling = [4.0, 2.5, 1.0, 2.5]
 
     if len(tier_scaling) != n_tiers:
         raise ValueError("tier_scaling length must equal n_tiers")
@@ -68,7 +68,7 @@ def generate_zone_coordinates(regions: List[str], region_names: List[str]) -> Tu
         "Norway": "Norway",
         "Mexico": "Mexico",
         "Panama": "Panama",
-        "United States 1": "United States of America"
+        "United States 2": "United States of America"
     }
     
     # Generate coordinates for each node
@@ -174,38 +174,45 @@ def generate_node_features(
         2: (0.3, 0.12),
         3: (0.25, 0.09)
     }
+    # Realistic cost factors by tier
+    # Tier 0: Suppliers (0.60-0.85) - raw materials, lower baseline value
+    # Tier 1: Manufacturers (0.85-1.10) - value addition, economies of scale
+    # Tier 2: Distributors (1.10-1.40) - finished goods, higher capital tied up
+    # Tier 3: Retailers (1.40-2.00) - prime real estate, customer-facing costs
+    base_cost_factor = {
+        0: (0.725, 0.0625),  # mean=0.725, std to cover 0.60-0.85 range (~95% within 2 std)
+        1: (0.975, 0.0625),  # mean=0.975, std to cover 0.85-1.10 range
+        2: (1.25, 0.075),    # mean=1.25, std to cover 1.10-1.40 range
+        3: (1.70, 0.15)      # mean=1.70, std to cover 1.40-2.00 range
+    }
 
     cap_mean, cap_std = base_capacity.get(tier_index, (400, 120))
     risk_mean, risk_std = base_risk.get(tier_index, (0.25, 0.10))
+    cost_mean, cost_std = base_cost_factor.get(tier_index, (1.0, 0.2))
 
     capacity = np.maximum(
         np.random.normal(loc=cap_mean, scale=cap_std, size=num_nodes),
         10
     )
 
-    cost_factor = np.random.normal(loc=1.0, scale=0.2, size=num_nodes)
+    cost_factor = np.round(
+        np.clip(
+            np.random.normal(loc=cost_mean, scale=cost_std, size=num_nodes),
+            0.5, 2.5  # Ensure values stay within reasonable bounds
+        ),
+        2  # Round to 2 decimal places
+    )
     risk_level = np.clip(
         np.random.normal(loc=risk_mean, scale=risk_std, size=num_nodes),
         0.01, 0.99
     )
-
-    region_risk_multiplier = {}
-
-    with open('ResilienceIndexRegions.csv', 'r') as file:
-        lines = file.readlines()
-
-    for line in lines[1:]:
-        parts = line.strip().split(',')
-        if len(parts) >= 6:
-            country = parts[1].strip()  # strip whitespace from country name too
-            if parts[3].strip():
-                # FIX: store the score as a plain float, not a nested dict
-                region_risk_multiplier[country] = float(parts[3].strip())
-
-    region_mult = np.array([
-        region_risk_multiplier.get(r, 1.0) for r in regions
-    ])
-    adjusted_risk = np.clip(risk_level * region_mult, 0.01, 0.99)
+    
+    # Generate reliability score (inversely related to risk)
+    # Higher reliability for lower risk nodes
+    reliability = np.clip(
+        1.0 - risk_level + np.random.normal(0, 0.05, size=num_nodes),
+        0.5, 1.0  # Reliability between 0.5 and 1.0
+    )
 
     # Generate x and y coordinates based on zone/region
     x_coords, y_coords = generate_zone_coordinates(regions, region_names)
@@ -217,8 +224,8 @@ def generate_node_features(
         "y": y_coords,
         "capacity": capacity,
         "cost_factor": cost_factor,
-        "base_risk": risk_level,
-        "risk_level": adjusted_risk
+        "risk_level": risk_level,
+        "reliability": reliability
     })
 
     return df
@@ -227,27 +234,59 @@ def generate_node_features(
 def connect_tiers(
     upstream_nodes: List[int],
     downstream_nodes: List[int],
-    avg_degree: float = 2.5,
+    tier_connection: str = "generic",
     connection_bias: str = "random"
 ) -> List[Tuple[int, int]]:
     """
-    Create directed edges from upstream tier to downstream tier.
-    avg_degree: average number of connections each downstream node receives.
-    connection_bias: "random" or "capacity_preferential" (placeholder).
+    Create directed edges from upstream tier to downstream tier with realistic degree constraints.
+    
+    Realistic degree constraints:
+    - Suppliers -> Manufacturers: Each Manufacturer selects 2-4 Suppliers (multi-sourcing)
+    - Manufacturers -> Distributors: Each Distributor selects 1-3 Manufacturers
+    - Distributors -> Retailers: Each Retailer connects to 1 primary Distributor (hub-and-spoke)
+                                 with 10% chance of 2nd backup Distributor
+    
+    Args:
+        upstream_nodes: List of upstream node IDs
+        downstream_nodes: List of downstream node IDs
+        tier_connection: Type of connection ("supplier_to_mfg", "mfg_to_dist", "dist_to_retail", "generic")
+        connection_bias: "random" or "capacity_preferential" (placeholder)
+    
+    Returns:
+        List of edges (source, target)
     """
     edges = []
 
     if len(upstream_nodes) == 0 or len(downstream_nodes) == 0:
         return edges
 
-    # Number of upstream connections for each downstream node
-    degs = np.random.poisson(lam=avg_degree, size=len(downstream_nodes))
-    degs = np.clip(degs, 1, len(upstream_nodes))  # at least 1 connection
-
-    for dn, d_deg in zip(downstream_nodes, degs):
-        # Pick distinct upstream suppliers
-        us = np.random.choice(upstream_nodes, size=d_deg, replace=False)
-        for u in us:
+    # Apply realistic degree constraints based on tier connection
+    for dn in downstream_nodes:
+        if tier_connection == "supplier_to_mfg":
+            # Manufacturers: 2-4 suppliers (multi-sourcing)
+            n_connections = np.random.randint(2, 5)
+            n_connections = min(n_connections, len(upstream_nodes))
+            
+        elif tier_connection == "mfg_to_dist":
+            # Distributors: 1-3 manufacturers
+            n_connections = np.random.randint(1, 4)
+            n_connections = min(n_connections, len(upstream_nodes))
+            
+        elif tier_connection == "dist_to_retail":
+            # Retailers: 1 primary distributor + 10% chance of backup
+            n_connections = 1
+            if np.random.random() < 0.10:  # 10% chance of backup
+                n_connections = 2
+            n_connections = min(n_connections, len(upstream_nodes))
+            
+        else:
+            # Generic: Poisson distribution (fallback for other connections)
+            n_connections = np.random.poisson(lam=2.5)
+            n_connections = np.clip(n_connections, 1, len(upstream_nodes))
+        
+        # Pick distinct upstream nodes
+        selected_upstream = np.random.choice(upstream_nodes, size=n_connections, replace=False)
+        for u in selected_upstream:
             edges.append((u, dn))
 
     return edges
@@ -258,23 +297,41 @@ def generate_edge_features(
     node_df: pd.DataFrame
 ) -> pd.DataFrame:
     """
-    Generate edge-level features such as lead time, transport cost,
-    capacity share, disruption probability.
+    Generate edge-level features including hierarchical flow quantities.
+    
+    Flow ranges by tier connection:
+    - Suppliers (Tier 0) -> Manufacturers (Tier 1): 10,000 to 50,000 units
+    - Manufacturers (Tier 1) -> Distributors (Tier 2): 5,000 to 20,000 units
+    - Distributors (Tier 2) -> Retailers (Tier 3): 1,000 to 5,000 units
     """
     edges = list(G.edges())
     n_edges = len(edges)
 
-    # Example logic:
-    # lead_time depends on region pair (domestic vs cross-region)
-    # cost depends on distance class (approx via region)
     lead_times = []
     transport_costs = []
     capacity_shares = []
     disruption_probs = []
+    flow_quantities = []
 
     for u, v in edges:
         region_u = node_df.loc[u, "region"]
         region_v = node_df.loc[v, "region"]
+        tier_u = node_df.loc[u, "tier"]
+        tier_v = node_df.loc[v, "tier"]
+
+        # Hierarchical flow quantities based on tier connection
+        if tier_u == 0 and tier_v == 1:
+            # Suppliers -> Manufacturers: 10,000 to 50,000 units
+            flow = np.random.uniform(10000, 50000)
+        elif tier_u == 1 and tier_v == 2:
+            # Manufacturers -> Distributors: 5,000 to 20,000 units
+            flow = np.random.uniform(5000, 20000)
+        elif tier_u == 2 and tier_v == 3:
+            # Distributors -> Retailers: 1,000 to 5,000 units
+            flow = np.random.uniform(1000, 5000)
+        else:
+            # Fallback for any other connections
+            flow = np.random.uniform(1000, 10000)
 
         # Domestic vs international
         if region_u == region_v:
@@ -302,6 +359,7 @@ def generate_edge_features(
         transport_costs.append(cost)
         capacity_shares.append(share)
         disruption_probs.append(d_prob)
+        flow_quantities.append(flow)
 
     edge_df = pd.DataFrame({
         "source": [u for u, v in edges],
@@ -309,7 +367,8 @@ def generate_edge_features(
         "lead_time": lead_times,
         "transport_cost": transport_costs,
         "capacity_share": capacity_shares,
-        "disruption_probability": disruption_probs
+        "disruption_probability": disruption_probs,
+        "flow_quantity": flow_quantities
     })
 
     return edge_df
@@ -360,15 +419,24 @@ def build_synthetic_supply_chain_graph(
     node_df = pd.concat(node_dfs, axis=0)
     node_df.index.name = "node_id"
 
-    # Create edges between consecutive tiers
+    # Create edges between consecutive tiers with realistic degree constraints
     edges = []
+    tier_connection_types = ["supplier_to_mfg", "mfg_to_dist", "dist_to_retail"]
+    
     for t in range(n_tiers - 1):
         up_nodes = node_ids[t]
         down_nodes = node_ids[t + 1]
+        
+        # Determine connection type
+        if t < len(tier_connection_types):
+            connection_type = tier_connection_types[t]
+        else:
+            connection_type = "generic"
+        
         edges_t = connect_tiers(
             upstream_nodes=up_nodes,
             downstream_nodes=down_nodes,
-            avg_degree=avg_degree_between_tiers
+            tier_connection=connection_type
         )
         edges.extend(edges_t)
 
@@ -383,7 +451,6 @@ def build_synthetic_supply_chain_graph(
             y=float(row["y"]),
             capacity=float(row["capacity"]),
             cost_factor=float(row["cost_factor"]),
-            base_risk=float(row["base_risk"]),
             risk_level=float(row["risk_level"])
         )
 
