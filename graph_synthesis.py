@@ -207,12 +207,29 @@ def generate_node_features(
         0.01, 0.99
     )
     
-    # Generate reliability score (inversely related to risk)
-    # Higher reliability for lower risk nodes
-    reliability = np.clip(
-        1.0 - risk_level + np.random.normal(0, 0.05, size=num_nodes),
-        0.5, 1.0  # Reliability between 0.5 and 1.0
-    )
+    # Generate reliability score using Beta distribution skewed towards high reliability
+    # Research basis:
+    # - Chopra & Sodhi (2004): "Managing Risk to Avoid Supply-Chain Breakdown" - larger firms have better reliability
+    # - Christopher & Peck (2004): "Building the Resilient Supply Chain" - capacity correlates with reliability
+    # - Sheffi & Rice (2005): "A Supply Chain View of the Resilient Enterprise" - risk inversely affects reliability
+    
+    # Base reliability from Beta distribution (skewed towards 0.95)
+    # Beta(α=20, β=2) gives mean ≈ 0.91, heavily skewed towards high values
+    base_reliability = np.random.beta(a=20, b=2, size=num_nodes)
+    
+    # Normalize capacity to [0, 1] for correlation calculation
+    capacity_normalized = (capacity - capacity.min()) / (capacity.max() - capacity.min() + 1e-8)
+    
+    # Apply correlations:
+    # 1. Positive correlation with capacity (+0.05 * normalized_capacity)
+    #    Larger nodes are more reliable (economies of scale, better processes)
+    # 2. Negative correlation with risk (-0.15 * risk_level)
+    #    Higher risk reduces reliability
+    reliability = base_reliability + 0.05 * capacity_normalized - 0.15 * risk_level
+    
+    # Clip to realistic range [0.60, 0.99]
+    # Most supply chain nodes are reasonably reliable (60%+), but not perfect
+    reliability = np.clip(reliability, 0.60, 0.99)
 
     # Generate x and y coordinates based on zone/region
     x_coords, y_coords = generate_zone_coordinates(regions, region_names)
