@@ -201,6 +201,51 @@ def verify_supply_chain_constraints(
     return results
 
 
+def standardize_node_features(
+    node_df: pd.DataFrame,
+    feature_columns: list = None
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """
+    Apply Z-score standardization to ALL numerical node features (GLOBAL standardization).
+    
+    Default features to standardize:
+    - tier
+    - capacity
+    - cost_factor
+    - risk_level
+    - reliability
+    - x (location coordinate)
+    - y (location coordinate)
+    
+    Args:
+        node_df: DataFrame with raw node features
+        feature_columns: List of columns to standardize (if None, uses default)
+        
+    Returns:
+        Tuple of (DataFrame with standardized columns added, standardized feature matrix)
+    """
+    if feature_columns is None:
+        feature_columns = ['tier', 'capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']
+    
+    # Create a copy
+    standardized_df = node_df.copy()
+    
+    # Apply Z-score standardization to each feature
+    standardized_features = []
+    for col in feature_columns:
+        if col in node_df.columns:
+            std_values = z_score_standardization(node_df[col].values)
+            standardized_df[f'{col}_std'] = std_values
+            standardized_features.append(std_values)
+        else:
+            print(f"Warning: Column '{col}' not found in node_df")
+    
+    # Create feature matrix
+    feature_matrix = np.column_stack(standardized_features)
+    
+    return standardized_df, feature_matrix
+
+
 def standardize_node_features_by_tier(
     node_df: pd.DataFrame,
     feature_columns: list = None

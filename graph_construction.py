@@ -35,10 +35,8 @@ def prepare_node_features(node_df: pd.DataFrame) -> torch.Tensor:
     Convert node DataFrame to PyTorch tensor for GNN input.
     
     Features included:
-    - tier (normalized)
-    - capacity (normalized)
-    - cost_factor
-    - risk_level
+    - tier (one-hot encoded, 4 dimensions, NOT standardized)
+    - capacity, cost_factor, risk_level, reliability, x, y (Z-score standardized)
     
     Args:
         node_df: DataFrame containing node information
@@ -46,26 +44,57 @@ def prepare_node_features(node_df: pd.DataFrame) -> torch.Tensor:
     Returns:
         Tensor of shape [num_nodes, num_features]
     """
-    # Select numerical features
-    feature_columns = ['tier', 'capacity', 'cost_factor', 'risk_level']
+    # One-hot encode tier (4 dimensions for tiers 0-3)
+    tier_values = node_df['tier'].values
+    num_nodes = len(node_df)
+    num_tiers = 4
     
-    # Extract features
-    features = node_df[feature_columns].values
+    # Create one-hot encoding matrix
+    tier_one_hot = np.zeros((num_nodes, num_tiers))
+    for i, tier in enumerate(tier_values):
+        tier_one_hot[i, int(tier)] = 1
     
-    # Normalize tier (divide by max tier)
-    max_tier = features[:, 0].max()
-    features[:, 0] = features[:, 0] / max_tier
+    # Extract other numerical features
+    feature_columns = ['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']
+    numerical_features = node_df[feature_columns].values
     
-    # Normalize capacity (min-max scaling)
-    capacity_col = features[:, 1]
-    capacity_min = capacity_col.min()
-    capacity_max = capacity_col.max()
-    features[:, 1] = (capacity_col - capacity_min) / (capacity_max - capacity_min)
+    # Apply Z-score standardization to all numerical features
+    standardized_features = []
+    for i, col in enumerate(feature_columns):
+        values = numerical_features[:, i]
+        mean = values.mean()
+        std = values.std()
+        
+        if std > 0:
+            standardized = (values - mean) / std
+        else:
+            standardized = np.zeros_like(values)
+        
+        standardized_features.append(standardized)
+    
+    # Stack standardized features
+    standardized_numerical = np.column_stack(standardized_features)
+    
+    # Concatenate one-hot encoded tier with standardized numerical features
+    # Result: [tier_0, tier_1, tier_2, tier_3, capacity_std, cost_factor_std, risk_level_std, reliability_std, x_std, y_std]
+    all_features = np.concatenate([tier_one_hot, standardized_numerical], axis=1)
     
     # Convert to tensor
-    node_features = torch.tensor(features, dtype=torch.float)
+    node_features = torch.tensor(all_features, dtype=torch.float)
     
     print(f"Node features shape: {node_features.shape}")
+    print(f"  - Tier (one-hot, NOT standardized): 4 dimensions")
+    print(f"  - Numerical features (Z-score standardized): 6 dimensions")
+    print(f"    Features: {feature_columns}")
+    print(f"    Mean ≈ 0, Std ≈ 1 for each feature")
+    print(f"  - Total: {node_features.shape[1]} dimensions")
+    
+    # Print standardization verification
+    print(f"\n  Standardization verification:")
+    for i, col in enumerate(feature_columns):
+        feat_values = standardized_numerical[:, i]
+        print(f"    {col:15s}: mean={feat_values.mean():.6f}, std={feat_values.std():.6f}")
+    
     return node_features
 
 
@@ -524,9 +553,11 @@ if __name__ == "__main__":
     # Create GNN graph from synthetic data
     print("Creating GNN graph from synthetic supply chain data...\n")
     
+    # Test with basic preprocessing (one-hot encoding)
     data = create_gnn_graph(
         node_path="synthetic_nodes.csv",
         edge_path="synthetic_edges.csv",
+        use_preprocessing=False,
         include_edge_features=True
     )
     
