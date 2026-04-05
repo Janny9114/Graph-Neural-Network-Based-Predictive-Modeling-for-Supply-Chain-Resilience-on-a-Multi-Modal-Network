@@ -195,11 +195,20 @@ def generate_node_features(
         10
     )
 
+    # Generate cost_factor with tier-specific clipping ranges
+    cost_factor_raw = np.random.normal(loc=cost_mean, scale=cost_std, size=num_nodes)
+    
+    # Tier-specific clipping ranges
+    clip_ranges = {
+        0: (0.60, 0.85),
+        1: (0.85, 1.10),
+        2: (1.10, 1.40),
+        3: (1.40, 2.00)
+    }
+    clip_min, clip_max = clip_ranges.get(tier_index, (0.5, 2.5))
+    
     cost_factor = np.round(
-        np.clip(
-            np.random.normal(loc=cost_mean, scale=cost_std, size=num_nodes),
-            0.5, 2.5  # Ensure values stay within reasonable bounds
-        ),
+        np.clip(cost_factor_raw, clip_min, clip_max),
         2  # Round to 2 decimal places
     )
     risk_level = np.clip(
