@@ -378,12 +378,22 @@ def main():
     print("HETEROGENEOUS GNN TRAINING")
     print("="*70)
     
+    # Set device (GPU if available, otherwise CPU)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"\n🖥️  Using device: {device}")
+    if torch.cuda.is_available():
+        print(f"   GPU: {torch.cuda.get_device_name(0)}")
+        print(f"   Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    
     # Set random seeds
     torch.manual_seed(42)
     np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
     
     # Load heterogeneous data
     data, node_df = load_heterogeneous_data()
+    data = data.to(device)
     
     # Create train/val/test splits
     print("\nCreating train/val/test splits...")
@@ -400,7 +410,7 @@ def main():
         hidden_channels=128,
         num_heads=4,
         dropout=0.3
-    )
+    ).to(device)
     
     print(f"Model: HeteroGATResiliencePredictor")
     print(f"  Input features: {in_channels}")
@@ -430,6 +440,7 @@ def main():
         class_counts = torch.bincount(y_train)
         class_weights = 1.0 / class_counts.float()
         class_weights = class_weights / class_weights.sum()
+        class_weights = class_weights.to(device)
         class_weights_dict[tier_name] = class_weights
         print(f"  {tier_name}: {class_weights.tolist()}")
     
@@ -473,7 +484,7 @@ def main():
             break
     
     # Load best model
-    model.load_state_dict(torch.load('best_hetero_gnn_model.pt'))
+    model.load_state_dict(torch.load('best_hetero_gnn_model.pt', map_location=device))
     
     # Plot training history
     plot_training_history(train_losses, val_f1_scores)

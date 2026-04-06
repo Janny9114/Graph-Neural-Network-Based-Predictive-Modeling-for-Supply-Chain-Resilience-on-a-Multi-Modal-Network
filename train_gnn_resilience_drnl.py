@@ -223,12 +223,22 @@ def main():
     print("GNN TRAINING WITH DRNL STRUCTURAL LABELS")
     print("="*70)
     
+    # Set device (GPU if available, otherwise CPU)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"\n🖥️  Using device: {device}")
+    if torch.cuda.is_available():
+        print(f"   GPU: {torch.cuda.get_device_name(0)}")
+        print(f"   Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    
     # Set random seeds for reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
     
     # Load data
     data = load_data()
+    data = data.to(device)
     
     # Create train/val/test splits
     train_mask, val_mask, test_mask = create_train_val_test_masks(data.num_nodes)
@@ -242,7 +252,7 @@ def main():
         hidden_channels=64,
         num_heads=4,
         dropout=0.3
-    )
+    ).to(device)
     print(f"Model: {model.__class__.__name__}")
     print(f"  Input features: {data.x.shape[1]} (includes DRNL!)")
     print(f"  Hidden channels: 64")
@@ -257,6 +267,7 @@ def main():
     class_counts = torch.bincount(data.y[train_mask])
     class_weights = 1.0 / class_counts.float()
     class_weights = class_weights / class_weights.sum()  # Normalize
+    class_weights = class_weights.to(device)
     print(f"\nClass weights: {class_weights.tolist()}")
     
     # Training loop
@@ -304,7 +315,7 @@ def main():
     
     # Load best model if it was saved
     if best_epoch > 0:
-        model.load_state_dict(torch.load('best_gnn_model_drnl.pt'))
+        model.load_state_dict(torch.load('best_gnn_model_drnl.pt', map_location=device))
     else:
         # Save current model if no improvement was made
         torch.save(model.state_dict(), 'best_gnn_model_drnl.pt')
