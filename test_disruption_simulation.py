@@ -391,10 +391,10 @@ def main():
         seed=42
     )
     
-    # Generate cascading scenarios
+    # Generate cascading scenarios (ADVANCED: 1000 scenarios)
     scenarios, centrality = simulator.generate_cascading_scenarios(
         node_df, edge_df,
-        num_scenarios=100,
+        num_scenarios=1000,
         initial_disruption_prob=0.15
     )
     

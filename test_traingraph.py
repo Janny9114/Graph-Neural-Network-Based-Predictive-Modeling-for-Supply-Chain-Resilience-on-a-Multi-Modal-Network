@@ -15,16 +15,17 @@ import seaborn as sns
 
 class GATResiliencePredictor(torch.nn.Module):
     """
-    Graph Attention Network for predicting supply chain node resilience.
+    ADVANCED Graph Attention Network for predicting supply chain node resilience.
     
     Architecture:
-    - 3 GAT layers with multi-head attention
+    - 4 GAT layers with multi-head attention (UPGRADED from 3)
+    - 128 hidden channels (UPGRADED from 64)
     - Batch normalization for stability
     - Dropout for regularization
     - Binary classification output
     """
     
-    def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3):
+    def __init__(self, in_channels, hidden_channels=128, num_heads=4, dropout=0.3):
         super(GATResiliencePredictor, self).__init__()
         
         # First GAT layer: in_channels -> hidden_channels (4 heads)
@@ -35,9 +36,13 @@ class GATResiliencePredictor(torch.nn.Module):
         self.conv2 = GATConv(hidden_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
         self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
         
-        # Third GAT layer: hidden_channels -> hidden_channels (1 head)
-        self.conv3 = GATConv(hidden_channels, hidden_channels, heads=1, dropout=dropout)
+        # Third GAT layer: hidden_channels -> hidden_channels (4 heads)
+        self.conv3 = GATConv(hidden_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
         self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
+        
+        # Fourth GAT layer: hidden_channels -> hidden_channels (1 head) [NEW]
+        self.conv4 = GATConv(hidden_channels, hidden_channels, heads=1, dropout=dropout)
+        self.bn4 = torch.nn.BatchNorm1d(hidden_channels)
         
         # Output layer: hidden_channels -> 2 classes (resilient/vulnerable)
         self.fc = torch.nn.Linear(hidden_channels, 2)
@@ -60,6 +65,12 @@ class GATResiliencePredictor(torch.nn.Module):
         # Layer 3
         x = self.conv3(x, edge_index)
         x = self.bn3(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Layer 4 [NEW]
+        x = self.conv4(x, edge_index)
+        x = self.bn4(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
@@ -265,9 +276,9 @@ def train_baseline_ml(X_train, y_train, X_test, y_test):
 
 
 def main():
-    """Main training pipeline with cascading labels + DRNL."""
+    """Main training pipeline with ADVANCED cascading labels + DRNL."""
     print("="*70)
-    print("GNN TRAINING WITH CASCADING + DRNL")
+    print("ADVANCED GNN TRAINING (1000 scenarios + 4 layers + 128 hidden)")
     print("="*70)
     
     # Set random seeds for reproducibility
@@ -286,13 +297,14 @@ def main():
     print("="*70)
     model = GATResiliencePredictor(
         in_channels=data.x.shape[1],
-        hidden_channels=64,
+        hidden_channels=128,
         num_heads=4,
         dropout=0.3
     )
-    print(f"Model: {model.__class__.__name__}")
+    print(f"Model: {model.__class__.__name__} (ADVANCED)")
     print(f"  Input features: {data.x.shape[1]}")
-    print(f"  Hidden channels: 64")
+    print(f"  Hidden channels: 128 (UPGRADED from 64)")
+    print(f"  GAT layers: 4 (UPGRADED from 3)")
     print(f"  Attention heads: 4")
     print(f"  Dropout: 0.3")
     print(f"  Total parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -401,7 +413,7 @@ def main():
     
     # Save GNN results
     gnn_results = {
-        'model': 'GNN (Cascading+DRNL)',
+        'model': 'GNN (ADVANCED: 1000+4L+128H)',
         'best_epoch': best_epoch,
         'test_accuracy': test_acc,
         'test_precision': test_prec,
@@ -454,8 +466,8 @@ def main():
     print(results_df.to_string(index=False))
     
     # Save results
-    results_df.to_csv('cascading_drnl_training_results.csv', index=False)
-    print("\n✓ Results saved: cascading_drnl_training_results.csv")
+    results_df.to_csv('advanced_gnn_training_results.csv', index=False)
+    print("\n✓ Results saved: advanced_gnn_training_results.csv")
     
     # Determine winner
     best_model = results_df.iloc[0]
@@ -467,10 +479,10 @@ def main():
     print("✓ TRAINING COMPLETE!")
     print("="*70)
     print("\nGenerated files:")
-    print("  - best_gnn_model.pt (trained GNN model with DRNL)")
+    print("  - best_gnn_model.pt (ADVANCED GNN: 4 layers, 128 hidden)")
     print("  - training_history.png (loss/accuracy plots)")
     print("  - confusion_matrix.png (test set confusion matrix)")
-    print("  - cascading_drnl_training_results.csv (all model metrics)")
+    print("  - advanced_gnn_training_results.csv (all model metrics)")
 
 
 if __name__ == "__main__":
