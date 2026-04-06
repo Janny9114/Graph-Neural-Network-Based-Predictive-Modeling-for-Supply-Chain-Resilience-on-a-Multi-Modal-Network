@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { ComposableMap, Geographies, Geography, Marker, Line } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker, Line, ZoomableGroup } from "react-simple-maps";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
+import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import Papa from "papaparse";
 
@@ -82,6 +84,8 @@ export function WorldMapNetwork() {
   const [dynamicLocations, setDynamicLocations] = useState<Location[]>([]);
   const [dynamicConnections, setDynamicConnections] = useState<{from: string, to: string}[]>([]);
   const [loading, setLoading] = useState(true);
+  const [zoom, setZoom] = useState(1);
+  const [center, setCenter] = useState<[number, number]>([20, 30]);
 
   useEffect(() => {
     // Load nodes data
@@ -202,22 +206,57 @@ export function WorldMapNetwork() {
     }
   };
 
+  const handleZoomIn = () => {
+    setZoom(prev => Math.min(prev * 1.5, 8));
+  };
+
+  const handleZoomOut = () => {
+    setZoom(prev => Math.max(prev / 1.5, 1));
+  };
+
+  const handleReset = () => {
+    setZoom(1);
+    setCenter([20, 30]);
+  };
+
   return (
     <Card className="col-span-4">
-      <CardHeader>
-        <CardTitle>Global Supply Chain Network</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle>Global Supply Chain Network</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Drag to pan • Scroll to zoom • Click buttons for quick zoom
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handleZoomIn}>
+            <ZoomIn className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleZoomOut}>
+            <ZoomOut className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleReset}>
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="h-[600px]">
         <TooltipProvider>
           <ComposableMap
             projection="geoMercator"
-            projectionConfig={{
-              scale: 147,
-              center: [20, 30]
-            }}
             className="w-full h-full"
           >
-            <Geographies geography={geoUrl}>
+            <ZoomableGroup
+              center={center}
+              zoom={zoom}
+              minZoom={1}
+              maxZoom={8}
+              onMoveEnd={({ coordinates, zoom: newZoom }) => {
+                setCenter(coordinates as [number, number]);
+                setZoom(newZoom);
+              }}
+            >
+              <Geographies geography={geoUrl}>
               {({ geographies }: any) =>
                 geographies.map((geo: any) => (
                   <Geography
@@ -313,6 +352,7 @@ export function WorldMapNetwork() {
                 </Tooltip>
               </Marker>
             ))}
+            </ZoomableGroup>
           </ComposableMap>
         </TooltipProvider>
 

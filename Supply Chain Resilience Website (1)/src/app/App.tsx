@@ -246,14 +246,18 @@ export default function App() {
               />
             </div>
 
+            {/* GNN-Based Disruption Simulation - Main Feature */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <WhatIfSimulation />
+            </div>
+
             {/* Risk Scenario Analysis */}
             <div className="grid gap-6 md:grid-cols-4">
               <ScenarioAnalysis />
             </div>
 
-            {/* What-If Simulation and Mitigation Planning */}
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <WhatIfSimulation />
+            {/* Mitigation Planning */}
+            <div className="grid gap-6 md:grid-cols-4">
               <MitigationPlanning />
             </div>
 
