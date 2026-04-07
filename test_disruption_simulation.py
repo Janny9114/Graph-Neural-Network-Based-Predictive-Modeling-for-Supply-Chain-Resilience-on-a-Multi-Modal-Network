@@ -335,7 +335,7 @@ class CascadingDisruptionSimulator:
         edge_df: pd.DataFrame,
         num_scenarios: int = 100,
         initial_disruption_prob: float = 0.15,
-        include_targeted: bool = True
+        use_mixed_targeted: bool = True
     ) -> List[Dict]:
         """
         Generate disruption scenarios with cascading propagation.
@@ -343,9 +343,10 @@ class CascadingDisruptionSimulator:
         Args:
             node_df: Node features
             edge_df: Edge list
-            num_scenarios: Number of random scenarios
-            initial_disruption_prob: Probability of initial disruption
-            include_targeted: Whether to include 4 targeted scenarios
+            num_scenarios: Number of scenarios to generate
+            initial_disruption_prob: Probability of initial disruption (for random type)
+            use_mixed_targeted: If True, generate mixture of 4 targeted types
+                               If False, generate random probabilistic scenarios
         
         Returns:
             List of scenarios with cascading effects
@@ -365,82 +366,181 @@ class CascadingDisruptionSimulator:
             node_buffers[idx] = (inventory + backup) / 2
         
         scenarios = []
+        fixed_severity = 0.7  # 70% reliability reduction for targeted scenarios
         
-        # Add 4 targeted scenarios first (if enabled)
-        if include_targeted:
-            targeted_scenarios = self.generate_targeted_scenarios(
-                node_df, edge_df, G, centrality, node_buffers
-            )
-            scenarios.extend(targeted_scenarios)
+        # Prepare node lists for targeted scenarios
+        suppliers = node_df[node_df['tier'] == 0].index.tolist()
+        manufacturers = node_df[node_df['tier'] == 1].index.tolist()
+        distributors = node_df[node_df['tier'] == 2].index.tolist()
         
-        # Generate random scenarios
-        print(f"\nGenerating {num_scenarios} random cascading disruption scenarios...")
+        # Sort for capacity and risk-based selection
+        supplier_df = node_df[node_df['tier'] == 0]
+        manufacturer_df = node_df[node_df['tier'] == 1]
         
-        for scenario_id in range(num_scenarios):
-            # Step 1: Select initial disrupted nodes
-            initial_nodes = []
-            initial_severity = {}
+        # Distributor centrality for selection
+        distributor_centrality = [(node_id, centrality[node_id]['betweenness']) 
+                                   for node_id in distributors]
+        distributor_centrality.sort(key=lambda x: x[1], reverse=True)
+        
+        if use_mixed_targeted:
+            print(f"\n" + "="*70)
+            print(f"GENERATING {num_scenarios} MIXED TARGETED SCENARIOS")
+            print("="*70)
+            print("Each scenario randomly selects one of 4 types:")
+            print("  1. Random Supplier Failure (10 random suppliers)")
+            print("  2. High-Capacity Supplier Failure (5 highest-capacity)")
+            print("  3. High-Risk Manufacturer Failure (8 high-risk)")
+            print("  4. Central Distributor Failure (4 highest betweenness)")
+            print("="*70)
             
-            for idx, node in node_df.iterrows():
-                region = node.get('region', 'Unknown')
-                base_prob = self.region_disruption_prob.get(region, initial_disruption_prob)
-                
-                if np.random.random() < base_prob * initial_disruption_prob:
-                    initial_nodes.append(idx)
-                    
-                    # Sample disruption type and severity
-                    if region in self.region_disruption_types.index:
-                        disruption_type = np.random.choice(
-                            self.region_disruption_types.columns,
-                            p=self.region_disruption_types.loc[region].values
-                        )
-                    else:
-                        disruption_type = np.random.choice([
-                            'Port Congestion', 'Cyber Attack', 'Natural Disaster',
-                            'Labor Strike', 'Factory Incident', 'Geopolitical'
-                        ])
-                    
-                    # Sample severity
-                    mean_sev = self.disruption_severity_mean.get(disruption_type, 2.5)
-                    std_sev = self.disruption_severity_std.get(disruption_type, 1.0)
-                    severity = np.clip(np.random.normal(mean_sev, std_sev), 1, 5)
-                    severity_normalized = 0.3 + (severity - 1) / 4 * 0.7
-                    
-                    initial_severity[idx] = severity_normalized
-            
-            # Step 2: Propagate disruption through network
-            all_affected = self.propagate_disruption(
-                G, initial_nodes, initial_severity, node_buffers
-            )
-            
-            # Step 3: Store scenario
-            scenario = {
-                'scenario_id': f'random_{scenario_id}',
-                'scenario_type': 'Random Probabilistic',
-                'initial_nodes': initial_nodes,
-                'all_affected_nodes': list(all_affected.keys()),
-                'severities': all_affected,
-                'propagation_count': len(all_affected) - len(initial_nodes)
+            scenario_type_counts = {
+                'Random Supplier Failure': 0,
+                'High-Capacity Supplier Failure': 0,
+                'High-Risk Manufacturer Failure': 0,
+                'Central Distributor Failure': 0
             }
             
-            scenarios.append(scenario)
-        
-        # Print statistics
-        random_scenarios = [s for s in scenarios if s['scenario_type'] == 'Random Probabilistic']
-        initial_counts = [len(s['initial_nodes']) for s in random_scenarios]
-        total_counts = [len(s['all_affected_nodes']) for s in random_scenarios]
-        prop_counts = [s['propagation_count'] for s in random_scenarios]
-        
-        print(f"\nRandom Cascading Propagation Statistics:")
-        print(f"  Avg initial disruptions: {np.mean(initial_counts):.1f}")
-        print(f"  Avg total affected (after propagation): {np.mean(total_counts):.1f}")
-        print(f"  Avg propagated nodes: {np.mean(prop_counts):.1f}")
-        print(f"  Propagation multiplier: {np.mean(total_counts) / np.mean(initial_counts):.2f}x")
-        
-        print(f"\nTotal scenarios generated: {len(scenarios)}")
-        if include_targeted:
-            print(f"  - Targeted scenarios: 4")
-            print(f"  - Random scenarios: {len(random_scenarios)}")
+            for scenario_id in range(num_scenarios):
+                # Randomly select one of 4 scenario types
+                scenario_type = np.random.choice([
+                    'Random Supplier Failure',
+                    'High-Capacity Supplier Failure',
+                    'High-Risk Manufacturer Failure',
+                    'Central Distributor Failure'
+                ])
+                
+                scenario_type_counts[scenario_type] += 1
+                
+                # Generate scenario based on type
+                if scenario_type == 'Random Supplier Failure':
+                    # Type 1: Random Supplier Failure (10 random suppliers)
+                    if len(suppliers) >= 10:
+                        initial_nodes = np.random.choice(suppliers, size=10, replace=False).tolist()
+                    else:
+                        initial_nodes = suppliers
+                
+                elif scenario_type == 'High-Capacity Supplier Failure':
+                    # Type 2: High-Capacity Supplier Failure (5 highest-capacity)
+                    if len(supplier_df) >= 5:
+                        initial_nodes = supplier_df.nlargest(5, 'capacity').index.tolist()
+                    else:
+                        initial_nodes = supplier_df.index.tolist()
+                
+                elif scenario_type == 'High-Risk Manufacturer Failure':
+                    # Type 3: High-Risk Manufacturer Failure (8 high-risk)
+                    if len(manufacturer_df) >= 8:
+                        initial_nodes = manufacturer_df.nlargest(8, 'risk_level').index.tolist()
+                    else:
+                        initial_nodes = manufacturer_df.index.tolist()
+                
+                else:  # Central Distributor Failure
+                    # Type 4: Central Distributor Failure (4 highest betweenness)
+                    if len(distributor_centrality) >= 4:
+                        initial_nodes = [node_id for node_id, _ in distributor_centrality[:4]]
+                    else:
+                        initial_nodes = [node_id for node_id, _ in distributor_centrality]
+                
+                # Apply fixed severity and propagate
+                initial_severity = {node_id: fixed_severity for node_id in initial_nodes}
+                all_affected = self.propagate_disruption(G, initial_nodes, initial_severity, node_buffers)
+                
+                # Store scenario
+                scenario = {
+                    'scenario_id': f'mixed_{scenario_id}',
+                    'scenario_type': scenario_type,
+                    'initial_nodes': initial_nodes,
+                    'all_affected_nodes': list(all_affected.keys()),
+                    'severities': all_affected,
+                    'propagation_count': len(all_affected) - len(initial_nodes)
+                }
+                
+                scenarios.append(scenario)
+            
+            # Print statistics by type
+            print(f"\n" + "="*70)
+            print("SCENARIO TYPE DISTRIBUTION")
+            print("="*70)
+            for stype, count in scenario_type_counts.items():
+                percentage = (count / num_scenarios) * 100
+                print(f"{stype}: {count} ({percentage:.1f}%)")
+            
+            # Print overall statistics
+            initial_counts = [len(s['initial_nodes']) for s in scenarios]
+            total_counts = [len(s['all_affected_nodes']) for s in scenarios]
+            prop_counts = [s['propagation_count'] for s in scenarios]
+            
+            print(f"\n" + "="*70)
+            print("OVERALL STATISTICS")
+            print("="*70)
+            print(f"Total scenarios: {len(scenarios)}")
+            print(f"Avg initial disruptions: {np.mean(initial_counts):.1f}")
+            print(f"Avg total affected: {np.mean(total_counts):.1f}")
+            print(f"Avg propagated nodes: {np.mean(prop_counts):.1f}")
+            print(f"Propagation multiplier: {np.mean(total_counts) / np.mean(initial_counts):.2f}x")
+            
+        else:
+            # Original random probabilistic scenarios
+            print(f"\nGenerating {num_scenarios} random probabilistic scenarios...")
+            
+            for scenario_id in range(num_scenarios):
+                # Step 1: Select initial disrupted nodes
+                initial_nodes = []
+                initial_severity = {}
+                
+                for idx, node in node_df.iterrows():
+                    region = node.get('region', 'Unknown')
+                    base_prob = self.region_disruption_prob.get(region, initial_disruption_prob)
+                    
+                    if np.random.random() < base_prob * initial_disruption_prob:
+                        initial_nodes.append(idx)
+                        
+                        # Sample disruption type and severity
+                        if region in self.region_disruption_types.index:
+                            disruption_type = np.random.choice(
+                                self.region_disruption_types.columns,
+                                p=self.region_disruption_types.loc[region].values
+                            )
+                        else:
+                            disruption_type = np.random.choice([
+                                'Port Congestion', 'Cyber Attack', 'Natural Disaster',
+                                'Labor Strike', 'Factory Incident', 'Geopolitical'
+                            ])
+                        
+                        # Sample severity
+                        mean_sev = self.disruption_severity_mean.get(disruption_type, 2.5)
+                        std_sev = self.disruption_severity_std.get(disruption_type, 1.0)
+                        severity = np.clip(np.random.normal(mean_sev, std_sev), 1, 5)
+                        severity_normalized = 0.3 + (severity - 1) / 4 * 0.7
+                        
+                        initial_severity[idx] = severity_normalized
+                
+                # Step 2: Propagate disruption through network
+                all_affected = self.propagate_disruption(
+                    G, initial_nodes, initial_severity, node_buffers
+                )
+                
+                # Step 3: Store scenario
+                scenario = {
+                    'scenario_id': f'random_{scenario_id}',
+                    'scenario_type': 'Random Probabilistic',
+                    'initial_nodes': initial_nodes,
+                    'all_affected_nodes': list(all_affected.keys()),
+                    'severities': all_affected,
+                    'propagation_count': len(all_affected) - len(initial_nodes)
+                }
+                
+                scenarios.append(scenario)
+            
+            # Print statistics
+            initial_counts = [len(s['initial_nodes']) for s in scenarios]
+            total_counts = [len(s['all_affected_nodes']) for s in scenarios]
+            prop_counts = [s['propagation_count'] for s in scenarios]
+            
+            print(f"\nRandom Probabilistic Statistics:")
+            print(f"  Avg initial disruptions: {np.mean(initial_counts):.1f}")
+            print(f"  Avg total affected: {np.mean(total_counts):.1f}")
+            print(f"  Avg propagated nodes: {np.mean(prop_counts):.1f}")
+            print(f"  Propagation multiplier: {np.mean(total_counts) / np.mean(initial_counts):.2f}x")
         
         return scenarios, centrality
     

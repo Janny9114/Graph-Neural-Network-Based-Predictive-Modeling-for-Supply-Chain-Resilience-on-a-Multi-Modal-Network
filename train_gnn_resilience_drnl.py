@@ -67,14 +67,14 @@ def load_data():
     """Load DRNL-enhanced graph data and resilience labels."""
     print("Loading data...")
     
-    # Load DRNL-enhanced graph
-    data = torch.load('supply_chain_graph_drnl.pt', weights_only=False)
+    # Load DRNL-enhanced graph (WITH CASCADING + TARGETED SCENARIOS)
+    data = torch.load('supply_chain_graph_cascading_drnl.pt', weights_only=False)
     print(f"  Graph loaded: {data.num_nodes} nodes, {data.num_edges} edges")
     print(f"  Node features: {data.x.shape} (includes DRNL label!)")
     print(f"  Edge features: {data.edge_attr.shape if hasattr(data, 'edge_attr') else 'None'}")
     
-    # Load resilience labels
-    labels_df = pd.read_csv('node_resilience_labels.csv')
+    # Load resilience labels (WITH CASCADING + TARGETED SCENARIOS)
+    labels_df = pd.read_csv('node_resilience_labels_cascading.csv')
     print(f"  Labels loaded: {len(labels_df)} nodes")
     
     # Add labels to graph data
