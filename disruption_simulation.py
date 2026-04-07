@@ -1,244 +1,363 @@
 """
-Disruption Simulation Framework for GNN Training
-Based on research paper: "Graph Neural Network-Based Predictive Modeling for Enhanced Supply Chain Resilience"
-and historical data from supply_chain_disruption_recovery.csv
-
-This module implements Step 4: Disruption simulation for generating training labels
+Enhanced Disruption Simulation with Cascading Propagation
+Implements graph-based disruption propagation as described in research papers
 """
 
 import pandas as pd
 import numpy as np
-import torch
-from typing import Dict, List, Tuple, Optional
 import networkx as nx
+from typing import Dict, List, Tuple, Set
+import torch
 
-class DisruptionSimulator:
+class CascadingDisruptionSimulator:
     """
-    Simulates supply chain disruptions based on historical data patterns
-    and generates resilience labels for GNN training.
+    Implements cascading disruption propagation through supply chain network.
     
-    Key Formula from Paper (Equation 30):
-    ρ_i = (1/|D_i|) * Σ(1 - s_d * (t_d / t_max))
-    
-    where:
-    - ρ_i: historical resilience score of node i
-    - D_i: set of disruptions affecting node i
-    - s_d: severity of disruption d ∈ [0.3, 1.0]
-    - t_d: duration of disruption d
-    - t_max: normalization constant (30 days)
+    Key improvements over baseline:
+    1. Disruptions propagate through edges (2-3 hops)
+    2. Impact depends on edge weights (dependency strength)
+    3. Network centrality affects resilience
+    4. Downstream nodes affected by upstream failures
     """
     
     def __init__(
         self,
         historical_data_path: str = "external_disruption_data/supply_chain_disruption_recovery.csv",
         resilience_threshold: float = 0.6,
-        t_max: int = 30,
+        propagation_decay: float = 0.7,
+        max_hops: int = 3,
         seed: int = 42
     ):
         """
-        Initialize the disruption simulator.
+        Initialize cascading disruption simulator.
         
         Args:
             historical_data_path: Path to historical disruption data
-            resilience_threshold: Threshold τ for binary classification (default: 0.6)
-            t_max: Maximum duration for normalization (default: 30 days)
-            seed: Random seed for reproducibility
+            resilience_threshold: Threshold for binary classification
+            propagation_decay: Impact decay factor per hop (0.7 = 30% reduction)
+            max_hops: Maximum propagation distance
+            seed: Random seed
         """
         self.historical_data = pd.read_csv(historical_data_path)
         self.resilience_threshold = resilience_threshold
-        self.t_max = t_max
+        self.propagation_decay = propagation_decay
+        self.max_hops = max_hops
         np.random.seed(seed)
         
-        # Extract disruption patterns from historical data
         self._analyze_historical_patterns()
     
     def _analyze_historical_patterns(self):
-        """
-        Analyze historical data to extract disruption patterns by:
-        - Region
-        - Industry
-        - Supplier tier
-        - Company size
-        """
+        """Extract disruption patterns from historical data."""
         df = self.historical_data
         
         # Disruption probability by region
         self.region_disruption_prob = df.groupby('supplier_region').size() / len(df)
         
-        # Disruption type distribution by region
+        # Disruption type distribution
         self.region_disruption_types = df.groupby(['supplier_region', 'disruption_type']).size().unstack(fill_value=0)
-        self.region_disruption_types = self.region_disruption_types.div(self.region_disruption_types.sum(axis=1), axis=0)
+        self.region_disruption_types = self.region_disruption_types.div(
+            self.region_disruption_types.sum(axis=1), axis=0
+        )
         
-        # Average severity by disruption type
+        # Severity statistics
         self.disruption_severity_mean = df.groupby('disruption_type')['disruption_severity'].mean()
         self.disruption_severity_std = df.groupby('disruption_type')['disruption_severity'].std()
         
-        # Recovery time statistics
-        self.recovery_time_stats = df.groupby(['disruption_type', 'has_backup_supplier']).agg({
-            'full_recovery_days': ['mean', 'std']
-        })
-        
-        # Production impact statistics
-        self.production_impact_stats = df.groupby(['disruption_type', 'supplier_tier']).agg({
-            'production_impact_pct': ['mean', 'std']
-        })
-        
-        print("Historical disruption patterns analyzed:")
-        print(f"  - Regions: {len(self.region_disruption_prob)}")
-        print(f"  - Disruption types: {len(self.disruption_severity_mean)}")
-        print(f"  - Total historical events: {len(df)}")
+        print("Historical patterns analyzed for cascading simulation")
     
-    def generate_disruption_scenarios(
-        self,
-        node_df: pd.DataFrame,
-        num_scenarios: int = 100,
-        disruption_probability: float = 0.15
-    ) -> List[Dict]:
+    def build_network_graph(self, node_df: pd.DataFrame, edge_df: pd.DataFrame) -> nx.DiGraph:
         """
-        Generate multiple disruption scenarios for training.
+        Build directed graph for propagation simulation.
         
         Args:
-            node_df: DataFrame with node information (tier, region, capacity, etc.)
-            num_scenarios: Number of disruption scenarios to generate
-            disruption_probability: Probability of each node being disrupted
+            node_df: Node features
+            edge_df: Edge list with source, target
         
         Returns:
-            List of disruption scenarios, each containing:
-            - disrupted_nodes: List of node IDs
-            - disruption_types: Dict mapping node_id to disruption type
-            - severities: Dict mapping node_id to severity [0.3, 1.0]
-            - durations: Dict mapping node_id to duration (days)
+            NetworkX directed graph
         """
+        G = nx.DiGraph()
+        
+        # Add nodes with attributes
+        for idx, node in node_df.iterrows():
+            G.add_node(idx, **node.to_dict())
+        
+        # Add edges with weights
+        for _, edge in edge_df.iterrows():
+            source, target = edge['source'], edge['target']
+            # Edge weight = dependency strength (higher = stronger dependency)
+            weight = edge.get('weight', 1.0)
+            G.add_edge(source, target, weight=weight)
+        
+        print(f"Network graph built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        return G
+    
+    def calculate_network_centrality(self, G: nx.DiGraph) -> Dict[int, Dict[str, float]]:
+        """
+        Calculate network centrality measures for all nodes.
+        
+        Returns:
+            Dict mapping node_id to centrality metrics
+        """
+        print("Calculating network centrality measures...")
+        
+        centrality = {}
+        
+        # Degree centrality (in + out)
+        in_degree = dict(G.in_degree())
+        out_degree = dict(G.out_degree())
+        
+        # Betweenness centrality (nodes on critical paths)
+        betweenness = nx.betweenness_centrality(G)
+        
+        # PageRank (importance in network)
+        pagerank = nx.pagerank(G)
+        
+        for node in G.nodes():
+            centrality[node] = {
+                'in_degree': in_degree[node],
+                'out_degree': out_degree[node],
+                'betweenness': betweenness[node],
+                'pagerank': pagerank[node]
+            }
+        
+        return centrality
+    
+    def propagate_disruption(
+        self,
+        G: nx.DiGraph,
+        initial_nodes: List[int],
+        initial_severity: Dict[int, float],
+        node_buffers: Dict[int, float]
+    ) -> Dict[int, float]:
+        """
+        Propagate disruption through network using cascading failure model.
+        
+        Args:
+            G: Supply chain network graph
+            initial_nodes: Initially disrupted nodes
+            initial_severity: Severity for each initial node [0.3, 1.0]
+            node_buffers: Buffer capacity for each node [0, 1]
+        
+        Returns:
+            Dict mapping node_id to final impact severity
+        """
+        # Track affected nodes and their impact
+        affected = {node: initial_severity[node] for node in initial_nodes}
+        
+        # Propagate for max_hops iterations
+        for hop in range(self.max_hops):
+            new_affected = {}
+            
+            for node in list(affected.keys()):
+                # Get all downstream nodes (successors)
+                for successor in G.successors(node):
+                    if successor in affected:
+                        continue  # Already affected
+                    
+                    # Calculate propagated impact
+                    edge_weight = G[node][successor].get('weight', 1.0)
+                    buffer = node_buffers.get(successor, 0.5)
+                    
+                    # Impact formula: severity × edge_weight × decay × (1 - buffer)
+                    propagated_impact = (
+                        affected[node] * 
+                        edge_weight * 
+                        self.propagation_decay * 
+                        (1 - buffer)
+                    )
+                    
+                    # Only propagate if impact is significant (> 0.1)
+                    if propagated_impact > 0.1:
+                        if successor not in new_affected:
+                            new_affected[successor] = propagated_impact
+                        else:
+                            # Multiple sources affecting same node - take max
+                            new_affected[successor] = max(
+                                new_affected[successor],
+                                propagated_impact
+                            )
+            
+            # Add newly affected nodes
+            affected.update(new_affected)
+            
+            if len(new_affected) == 0:
+                break  # No more propagation
+        
+        return affected
+    
+    def generate_cascading_scenarios(
+        self,
+        node_df: pd.DataFrame,
+        edge_df: pd.DataFrame,
+        num_scenarios: int = 100,
+        initial_disruption_prob: float = 0.15
+    ) -> List[Dict]:
+        """
+        Generate disruption scenarios with cascading propagation.
+        
+        Args:
+            node_df: Node features
+            edge_df: Edge list
+            num_scenarios: Number of scenarios
+            initial_disruption_prob: Probability of initial disruption
+        
+        Returns:
+            List of scenarios with cascading effects
+        """
+        # Build network graph
+        G = self.build_network_graph(node_df, edge_df)
+        
+        # Calculate centrality
+        centrality = self.calculate_network_centrality(G)
+        
+        # Extract node buffers (inventory/backup capacity)
+        node_buffers = {}
+        for idx, node in node_df.iterrows():
+            # Buffer = combination of inventory level and backup capacity
+            inventory = node.get('inventory_level', 0.5)
+            backup = node.get('backup_capacity', 0.5)
+            node_buffers[idx] = (inventory + backup) / 2
+        
         scenarios = []
         
+        print(f"\nGenerating {num_scenarios} cascading disruption scenarios...")
+        
         for scenario_id in range(num_scenarios):
-            scenario = {
-                'scenario_id': scenario_id,
-                'disrupted_nodes': [],
-                'disruption_types': {},
-                'severities': {},
-                'durations': {},
-                'production_impacts': {}
-            }
+            # Step 1: Select initial disrupted nodes
+            initial_nodes = []
+            initial_severity = {}
             
             for idx, node in node_df.iterrows():
-                # Determine if node is disrupted based on region-specific probability
                 region = node.get('region', 'Unknown')
-                base_prob = self.region_disruption_prob.get(region, disruption_probability)
+                base_prob = self.region_disruption_prob.get(region, initial_disruption_prob)
                 
-                if np.random.random() < base_prob * disruption_probability:
-                    scenario['disrupted_nodes'].append(idx)
+                if np.random.random() < base_prob * initial_disruption_prob:
+                    initial_nodes.append(idx)
                     
-                    # Sample disruption type based on regional patterns
+                    # Sample disruption type and severity
                     if region in self.region_disruption_types.index:
                         disruption_type = np.random.choice(
                             self.region_disruption_types.columns,
                             p=self.region_disruption_types.loc[region].values
                         )
                     else:
-                        # Fallback to uniform distribution
                         disruption_type = np.random.choice([
                             'Port Congestion', 'Cyber Attack', 'Natural Disaster',
                             'Labor Strike', 'Factory Incident', 'Geopolitical'
                         ])
                     
-                    scenario['disruption_types'][idx] = disruption_type
-                    
-                    # Sample severity based on disruption type
-                    mean_severity = self.disruption_severity_mean.get(disruption_type, 2.5)
-                    std_severity = self.disruption_severity_std.get(disruption_type, 1.0)
-                    severity = np.clip(
-                        np.random.normal(mean_severity, std_severity),
-                        1, 5
-                    )
-                    # Normalize to [0.3, 1.0] range as per paper
+                    # Sample severity
+                    mean_sev = self.disruption_severity_mean.get(disruption_type, 2.5)
+                    std_sev = self.disruption_severity_std.get(disruption_type, 1.0)
+                    severity = np.clip(np.random.normal(mean_sev, std_sev), 1, 5)
                     severity_normalized = 0.3 + (severity - 1) / 4 * 0.7
-                    scenario['severities'][idx] = severity_normalized
                     
-                    # Sample duration based on severity and backup supplier status
-                    has_backup = node.get('has_backup_supplier', False)
-                    base_duration = np.random.exponential(scale=15) * severity
-                    if has_backup:
-                        base_duration *= 0.5  # 50% reduction with backup
-                    scenario['durations'][idx] = min(base_duration, 180)  # Cap at 180 days
-                    
-                    # Sample production impact
-                    tier = node.get('tier', 1)
-                    if (disruption_type, tier) in self.production_impact_stats.index:
-                        impact_mean = self.production_impact_stats.loc[(disruption_type, tier), ('production_impact_pct', 'mean')]
-                        impact_std = self.production_impact_stats.loc[(disruption_type, tier), ('production_impact_pct', 'std')]
-                    else:
-                        impact_mean = 30.0
-                        impact_std = 15.0
-                    
-                    production_impact = np.clip(
-                        np.random.normal(impact_mean, impact_std),
-                        1.0, 100.0
-                    )
-                    scenario['production_impacts'][idx] = production_impact
+                    initial_severity[idx] = severity_normalized
+            
+            # Step 2: Propagate disruption through network
+            all_affected = self.propagate_disruption(
+                G, initial_nodes, initial_severity, node_buffers
+            )
+            
+            # Step 3: Store scenario
+            scenario = {
+                'scenario_id': scenario_id,
+                'initial_nodes': initial_nodes,
+                'all_affected_nodes': list(all_affected.keys()),
+                'severities': all_affected,
+                'propagation_count': len(all_affected) - len(initial_nodes)
+            }
             
             scenarios.append(scenario)
         
-        print(f"Generated {num_scenarios} disruption scenarios")
-        print(f"  Average disrupted nodes per scenario: {np.mean([len(s['disrupted_nodes']) for s in scenarios]):.1f}")
+        # Print statistics
+        initial_counts = [len(s['initial_nodes']) for s in scenarios]
+        total_counts = [len(s['all_affected_nodes']) for s in scenarios]
+        prop_counts = [s['propagation_count'] for s in scenarios]
         
-        return scenarios
+        print(f"\nCascading Propagation Statistics:")
+        print(f"  Avg initial disruptions: {np.mean(initial_counts):.1f}")
+        print(f"  Avg total affected (after propagation): {np.mean(total_counts):.1f}")
+        print(f"  Avg propagated nodes: {np.mean(prop_counts):.1f}")
+        print(f"  Propagation multiplier: {np.mean(total_counts) / np.mean(initial_counts):.2f}x")
+        
+        return scenarios, centrality
     
-    def calculate_resilience_scores(
+    def calculate_network_aware_resilience(
         self,
         node_df: pd.DataFrame,
         scenarios: List[Dict],
-        edge_df: Optional[pd.DataFrame] = None
+        centrality: Dict[int, Dict[str, float]]
     ) -> pd.DataFrame:
         """
-        Calculate resilience scores for each node based on disruption scenarios.
-        
-        Implements Equation 30 from paper:
-        ρ_i = (1/|D_i|) * Σ(1 - s_d * (t_d / t_max))
+        Calculate resilience scores considering network position and cascading effects.
         
         Args:
-            node_df: DataFrame with node information
-            scenarios: List of disruption scenarios
-            edge_df: Optional edge DataFrame for propagation effects
+            node_df: Node features
+            scenarios: Cascading disruption scenarios
+            centrality: Network centrality measures
         
         Returns:
-            DataFrame with resilience scores and binary labels
+            DataFrame with resilience scores and labels
         """
         resilience_scores = {}
         disruption_counts = {}
+        propagated_counts = {}
         
         for node_id in node_df.index:
-            node_disruptions = []
+            node_impacts = []
+            direct_count = 0
+            propagated_count = 0
             
             for scenario in scenarios:
-                if node_id in scenario['disrupted_nodes']:
+                if node_id in scenario['severities']:
                     severity = scenario['severities'][node_id]
-                    duration = scenario['durations'][node_id]
                     
-                    # Calculate resilience contribution (Equation 30)
-                    resilience_contribution = 1 - severity * (duration / self.t_max)
-                    node_disruptions.append(resilience_contribution)
+                    # Track if direct or propagated
+                    if node_id in scenario['initial_nodes']:
+                        direct_count += 1
+                    else:
+                        propagated_count += 1
+                    
+                    # Resilience contribution (higher severity = lower resilience)
+                    resilience_contribution = 1 - severity
+                    node_impacts.append(resilience_contribution)
             
-            if len(node_disruptions) > 0:
-                # Average resilience across all disruptions
-                resilience_scores[node_id] = np.mean(node_disruptions)
-                disruption_counts[node_id] = len(node_disruptions)
+            if len(node_impacts) > 0:
+                base_resilience = np.mean(node_impacts)
+                
+                # Adjust based on network centrality
+                # High betweenness = more vulnerable (on critical paths)
+                betweenness_penalty = centrality[node_id]['betweenness'] * 0.2
+                
+                # High PageRank = more important but also more vulnerable
+                pagerank_penalty = centrality[node_id]['pagerank'] * 0.1
+                
+                # Final resilience score
+                resilience_scores[node_id] = max(0, base_resilience - betweenness_penalty - pagerank_penalty)
+                disruption_counts[node_id] = len(node_impacts)
+                propagated_counts[node_id] = propagated_count
             else:
                 # No disruptions = high resilience
                 resilience_scores[node_id] = 1.0
                 disruption_counts[node_id] = 0
+                propagated_counts[node_id] = 0
         
         # Create result DataFrame
         result_df = pd.DataFrame({
             'node_id': list(resilience_scores.keys()),
             'resilience_score': list(resilience_scores.values()),
-            'disruption_count': [disruption_counts[nid] for nid in resilience_scores.keys()]
+            'disruption_count': [disruption_counts[nid] for nid in resilience_scores.keys()],
+            'propagated_count': [propagated_counts[nid] for nid in resilience_scores.keys()],
+            'betweenness': [centrality[nid]['betweenness'] for nid in resilience_scores.keys()],
+            'pagerank': [centrality[nid]['pagerank'] for nid in resilience_scores.keys()]
         })
         
-        # Binary classification based on threshold τ
+        # Binary classification
         result_df['resilient'] = (result_df['resilience_score'] >= self.resilience_threshold).astype(int)
         
-        print(f"\nResilience Score Statistics:")
+        print(f"\nNetwork-Aware Resilience Statistics:")
         print(f"  Mean: {result_df['resilience_score'].mean():.3f}")
         print(f"  Std: {result_df['resilience_score'].std():.3f}")
         print(f"  Min: {result_df['resilience_score'].min():.3f}")
@@ -248,141 +367,71 @@ class DisruptionSimulator:
         print(f"  Vulnerable (0): {(result_df['resilient'] == 0).sum()} ({(result_df['resilient'] == 0).sum() / len(result_df) * 100:.1f}%)")
         
         return result_df
-    
-    def simulate_cascading_effects(
-        self,
-        scenario: Dict,
-        edge_df: pd.DataFrame,
-        node_df: pd.DataFrame,
-        propagation_probability: float = 0.3
-    ) -> Dict:
-        """
-        Simulate cascading disruption effects through the supply chain network.
-        
-        Based on Equation 2 from paper:
-        P(v_j | δ_i) = g(P(v_i | δ_i), A_ij, θ_i, θ_j)
-        
-        Args:
-            scenario: Initial disruption scenario
-            edge_df: Edge DataFrame with connections
-            node_df: Node DataFrame with attributes
-            propagation_probability: Base probability of disruption propagation
-        
-        Returns:
-            Updated scenario with cascading effects
-        """
-        # Build network graph
-        G = nx.DiGraph()
-        for _, edge in edge_df.iterrows():
-            G.add_edge(edge['source'], edge['target'])
-        
-        # Track propagated disruptions
-        propagated_nodes = set(scenario['disrupted_nodes'])
-        new_disruptions = {}
-        
-        # Iterate through disrupted nodes and propagate
-        for node_id in scenario['disrupted_nodes']:
-            severity = scenario['severities'][node_id]
-            
-            # Get downstream neighbors
-            if node_id in G:
-                for neighbor in G.successors(node_id):
-                    if neighbor not in propagated_nodes:
-                        # Calculate propagation probability based on severity and edge attributes
-                        prop_prob = propagation_probability * severity
-                        
-                        if np.random.random() < prop_prob:
-                            propagated_nodes.add(neighbor)
-                            
-                            # Reduced severity for propagated disruptions
-                            new_disruptions[neighbor] = {
-                                'type': scenario['disruption_types'][node_id],
-                                'severity': severity * 0.7,  # 30% reduction
-                                'duration': scenario['durations'][node_id] * 0.6,  # 40% reduction
-                                'source': node_id
-                            }
-        
-        # Update scenario with cascading effects
-        for node_id, disruption in new_disruptions.items():
-            scenario['disrupted_nodes'].append(node_id)
-            scenario['disruption_types'][node_id] = disruption['type']
-            scenario['severities'][node_id] = disruption['severity']
-            scenario['durations'][node_id] = disruption['duration']
-        
-        return scenario
-    
-    def export_labels_for_training(
-        self,
-        resilience_df: pd.DataFrame,
-        output_path: str = "node_resilience_labels.csv"
-    ):
-        """
-        Export resilience labels in format suitable for GNN training.
-        
-        Args:
-            resilience_df: DataFrame with resilience scores and labels
-            output_path: Path to save the labels
-        """
-        resilience_df.to_csv(output_path, index=False)
-        print(f"\nResilience labels exported to: {output_path}")
 
 
 def main():
-    """
-    Example usage of the disruption simulator.
-    """
+    """Test cascading disruption simulation."""
     print("="*70)
-    print("DISRUPTION SIMULATION FOR GNN TRAINING")
+    print("CASCADING DISRUPTION SIMULATION TEST")
     print("="*70)
     
-    # Load synthetic supply chain data
-    node_df = pd.read_csv("synthetic_nodes.csv")
-    edge_df = pd.read_csv("synthetic_edges.csv")
+    # Load data
+    node_df = pd.read_csv('synthetic_nodes.csv')
+    edge_df = pd.read_csv('synthetic_edges.csv')
     
-    print(f"\nLoaded supply chain data:")
+    print(f"\nLoaded data:")
     print(f"  Nodes: {len(node_df)}")
     print(f"  Edges: {len(edge_df)}")
     
     # Initialize simulator
-    simulator = DisruptionSimulator(
-        historical_data_path="external_disruption_data/supply_chain_disruption_recovery.csv",
+    simulator = CascadingDisruptionSimulator(
         resilience_threshold=0.6,
-        t_max=30
+        propagation_decay=0.7,
+        max_hops=3,
+        seed=42
     )
     
-    # Generate disruption scenarios
-    print("\n" + "="*70)
-    print("GENERATING DISRUPTION SCENARIOS")
+    # Generate cascading scenarios (ADVANCED: 1000 scenarios)
+    scenarios, centrality = simulator.generate_cascading_scenarios(
+        node_df, edge_df,
+        num_scenarios=1000,
+        initial_disruption_prob=0.15
+    )
+    
+    # Calculate network-aware resilience
+    result_df = simulator.calculate_network_aware_resilience(
+        node_df, scenarios, centrality
+    )
+    
+    # Save results
+    result_df.to_csv('node_resilience_labels_cascading.csv', index=False)
+    print(f"\n✓ Saved: node_resilience_labels_cascading.csv")
+    
+    # Compare with baseline (if exists)
+    try:
+        baseline_df = pd.read_csv('node_resilience_labels.csv')
+        print(f"\n" + "="*70)
+        print("COMPARISON WITH BASELINE")
+        print("="*70)
+        print(f"\nBaseline (no cascading):")
+        print(f"  Resilient: {(baseline_df['resilient'] == 1).sum()} ({(baseline_df['resilient'] == 1).sum() / len(baseline_df) * 100:.1f}%)")
+        print(f"  Mean score: {baseline_df['resilience_score'].mean():.3f}")
+        
+        print(f"\nCascading (with propagation):")
+        print(f"  Resilient: {(result_df['resilient'] == 1).sum()} ({(result_df['resilient'] == 1).sum() / len(result_df) * 100:.1f}%)")
+        print(f"  Mean score: {result_df['resilience_score'].mean():.3f}")
+        
+        # Nodes that changed classification
+        merged = baseline_df.merge(result_df, on='node_id', suffixes=('_baseline', '_cascading'))
+        changed = merged[merged['resilient_baseline'] != merged['resilient_cascading']]
+        print(f"\nNodes with changed classification: {len(changed)} ({len(changed)/len(merged)*100:.1f}%)")
+        
+    except FileNotFoundError:
+        print("\nNote: Baseline labels not found for comparison")
+    
+    print(f"\n" + "="*70)
+    print("✓ CASCADING SIMULATION COMPLETE!")
     print("="*70)
-    scenarios = simulator.generate_disruption_scenarios(
-        node_df=node_df,
-        num_scenarios=100,
-        disruption_probability=0.15
-    )
-    
-    # Calculate resilience scores
-    print("\n" + "="*70)
-    print("CALCULATING RESILIENCE SCORES")
-    print("="*70)
-    resilience_df = simulator.calculate_resilience_scores(
-        node_df=node_df,
-        scenarios=scenarios,
-        edge_df=edge_df
-    )
-    
-    # Export labels
-    simulator.export_labels_for_training(
-        resilience_df=resilience_df,
-        output_path="node_resilience_labels.csv"
-    )
-    
-    print("\n" + "="*70)
-    print("✓ DISRUPTION SIMULATION COMPLETE!")
-    print("="*70)
-    print("\nNext steps:")
-    print("  1. Use node_resilience_labels.csv as training labels")
-    print("  2. Train GNN model with graph structure + node features")
-    print("  3. Predict resilience for new disruption scenarios")
 
 
 if __name__ == "__main__":
