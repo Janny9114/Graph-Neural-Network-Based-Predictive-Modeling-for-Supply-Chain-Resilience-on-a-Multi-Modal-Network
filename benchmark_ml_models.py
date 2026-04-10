@@ -57,11 +57,11 @@ class MLBenchmark:
         print("="*70)
         
         # Load graph
-        data = torch.load('supply_chain_graph.pt', weights_only=False)
+        data = torch.load('supply_chain_graph_cascading_drnl.pt', weights_only=False)
         print(f"Graph: {data.num_nodes} nodes, {data.num_edges} edges")
         
-        # Load labels
-        labels_df = pd.read_csv('node_resilience_labels.csv')
+        # Load labels (use cascading labels for 5000 nodes)
+        labels_df = pd.read_csv('node_resilience_labels_cascading.csv')
         
         # Extract node features as numpy array
         X = data.x.numpy()

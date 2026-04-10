@@ -64,11 +64,15 @@ def generate_zone_coordinates(regions: List[str], region_names: List[str]) -> Tu
     
     # Map region names to country names in natural earth dataset
     region_to_country = {
-        "China 3": "China",
-        "Norway": "Norway",
+        "China 1": "China",
+        "China 2": "China",
         "Mexico": "Mexico",
-        "Panama": "Panama",
-        "United States 2": "United States of America"
+        "Netherlands": "Netherlands",
+        "England": "United Kingdom",
+        "United States 1": "United States of America",
+        "Norway": "Norway",
+        "India": "India",
+        "Kenya": "Kenya"
     }
     
     # Generate coordinates for each node
@@ -125,8 +129,11 @@ def generate_zone_coordinates(regions: List[str], region_names: List[str]) -> Tu
                     "China": (105.0, 35.0),
                     "Norway": (10.0, 60.0),
                     "Mexico": (-102.0, 23.0),
-                    "Panama": (-80.0, 9.0),
-                    "United States of America": (-95.0, 37.0)
+                    "Netherlands": (5.3, 52.1),
+                    "United Kingdom": (-1.5, 52.5),
+                    "United States of America": (-95.0, 37.0),
+                    "India": (78.0, 22.0),
+                    "Kenya": (37.9, -0.0)
                 }
                 lon, lat = fallback_coords.get(country_name, (0.0, 0.0))
                 # Add some random offset
@@ -138,11 +145,15 @@ def generate_zone_coordinates(regions: List[str], region_names: List[str]) -> Tu
         # Fallback if geopandas data not available
         print("Using fallback coordinate generation...")
         fallback_coords = {
-            "China 3": (105.0, 35.0),
-            "Norway": (10.0, 60.0),
+            "China 1": (105.0, 35.0),
+            "China 2": (115.0, 30.0),
             "Mexico": (-102.0, 23.0),
-            "Panama": (-80.0, 9.0),
-            "United States 1": (-95.0, 37.0)
+            "Netherlands": (5.3, 52.1),
+            "England": (-1.5, 52.5),
+            "United States 1": (-95.0, 37.0),
+            "Norway": (10.0, 60.0),
+            "India": (78.0, 22.0),
+            "Kenya": (37.9, -0.0)
         }
         
         for region in regions:
@@ -418,7 +429,7 @@ def build_synthetic_supply_chain_graph(
 
     
     if region_names is None:
-        region_names = ["China 3", "Norway", "Mexico", "Panama", "United States 1"]
+        region_names = ["China 1", "China 2", "Mexico", "Netherlands", "England", "United States 1", "Norway", "India", "Kenya"]
 
     tier_sizes = generate_tier_sizes(
         n_tiers=n_tiers,
@@ -524,7 +535,7 @@ if __name__ == "__main__":
 
     data = build_synthetic_supply_chain_graph(
         n_tiers=4,
-        base_per_tier=20,
+        base_per_tier=20,  # Changed from 20 to 500 for 5000 nodes
         tier_scaling=[3.0, 2.5, 2.0, 2.5],
         avg_degree_between_tiers=3.0,
         seed=123

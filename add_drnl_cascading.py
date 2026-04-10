@@ -40,9 +40,12 @@ def main():
     print("ADDING DRNL LABELS USING CASCADING DISRUPTION SOURCES")
     print("="*70)
     
-    # Load graph
+    # Load graph (regenerate from CSV for 5000 nodes)
     print("\nLoading graph...")
-    data = torch.load('supply_chain_graph.pt', weights_only=False)
+    from graph_construction import create_gnn_graph
+    
+    data = create_gnn_graph()
+    
     print(f"  Nodes: {data.num_nodes}")
     print(f"  Edges: {data.num_edges}")
     print(f"  Features: {data.x.shape}")
