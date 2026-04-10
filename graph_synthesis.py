@@ -535,7 +535,7 @@ if __name__ == "__main__":
 
     data = build_synthetic_supply_chain_graph(
         n_tiers=4,
-        base_per_tier=20,  # Changed from 20 to 500 for 5000 nodes
+        base_per_tier=5,  # Changed from 20 to 500 for 5000 nodes
         tier_scaling=[3.0, 2.5, 2.0, 2.5],
         avg_degree_between_tiers=3.0,
         seed=123
@@ -558,3 +558,23 @@ if __name__ == "__main__":
     export_to_csv(node_df, edge_df,
                   node_path="synthetic_nodes.csv",
                   edge_path="synthetic_edges.csv")
+    
+    # Automatically copy to website public folder
+    import shutil
+    import os
+    
+    website_public_path = "Supply Chain Resilience Website/public"
+    if os.path.exists(website_public_path):
+        try:
+            shutil.copy("synthetic_nodes.csv", os.path.join(website_public_path, "synthetic_nodes.csv"))
+            shutil.copy("synthetic_edges.csv", os.path.join(website_public_path, "synthetic_edges.csv"))
+            print("\n✓ Website data files automatically updated!")
+            print("  → synthetic_nodes.csv copied to website/public")
+            print("  → synthetic_edges.csv copied to website/public")
+            print("\nRefresh your browser (Ctrl+F5) to see changes in the website.")
+        except Exception as e:
+            print(f"\n⚠ Warning: Could not copy files to website: {e}")
+            print("  You may need to manually copy the files.")
+    else:
+        print(f"\n⚠ Website public folder not found at: {website_public_path}")
+        print("  Files saved to root directory only.")

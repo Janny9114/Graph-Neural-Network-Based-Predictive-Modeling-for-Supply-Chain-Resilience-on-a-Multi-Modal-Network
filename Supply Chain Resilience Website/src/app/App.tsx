@@ -133,33 +133,35 @@ export default function App() {
             </div>
           </TabsContent>
 
-          {/* Suppliers Tab */}
+          {/* Nodes Tab */}
           <TabsContent value="suppliers" className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <RiskMetricsCard
-                title="Total Suppliers"
-                value={124}
-                change={8.3}
+                title="Total Nodes"
+                value={49}
+                change={0}
+                unit=""
+                trend="neutral"
+              />
+              <RiskMetricsCard
+                title="High Risk Nodes"
+                value={0}
+                change={0}
                 unit=""
                 trend="up"
               />
               <RiskMetricsCard
-                title="High Risk Suppliers"
-                value={12}
-                change={-16.7}
+                title="Medium Risk Nodes"
+                value={13}
+                change={0}
                 unit=""
-                trend="up"
+                trend="neutral"
               />
               <RiskMetricsCard
-                title="Avg On-Time Delivery"
-                value={92.5}
-                change={1.2}
-                trend="up"
-              />
-              <RiskMetricsCard
-                title="Avg Quality Score"
-                value={90.8}
-                change={2.5}
+                title="Safe Nodes"
+                value={36}
+                change={0}
+                unit=""
                 trend="up"
               />
             </div>
@@ -218,34 +220,6 @@ export default function App() {
 
           {/* Scenarios Tab */}
           <TabsContent value="scenarios" className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <RiskMetricsCard
-                title="Scenarios Analyzed"
-                value={24}
-                change={9.1}
-                unit=""
-                trend="up"
-              />
-              <RiskMetricsCard
-                title="Avg Probability"
-                value={43}
-                change={-3.4}
-                trend="up"
-              />
-              <RiskMetricsCard
-                title="Mitigation Coverage"
-                value={76.6}
-                change={12.8}
-                trend="up"
-              />
-              <RiskMetricsCard
-                title="Readiness Score"
-                value={82}
-                change={6.5}
-                trend="up"
-              />
-            </div>
-
             {/* GNN-Based Disruption Simulation - Main Feature */}
             <div className="grid gap-6 md:grid-cols-4">
               <WhatIfSimulation />

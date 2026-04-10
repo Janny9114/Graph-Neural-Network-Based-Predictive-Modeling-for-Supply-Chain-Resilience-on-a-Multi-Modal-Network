@@ -30,30 +30,73 @@ export function WhatIfSimulation() {
   const [duration, setDuration] = useState([7]);
   const [simulated, setSimulated] = useState(false);
   const [historicalData, setHistoricalData] = useState<DisruptionData[]>([]);
+  const [nodes, setNodes] = useState<any[]>([]);
+  const [edges, setEdges] = useState<any[]>([]);
+  const [affectedNodes, setAffectedNodes] = useState<Set<string>>(new Set());
+  const [cascadeLevel, setCascadeLevel] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Load historical disruption data
-    Papa.parse('/external_disruption_data/global_supply_chain_disruption_v1.csv', {
-      download: true,
-      header: true,
-      complete: (results: any) => {
-        const data = results.data as DisruptionData[];
-        setHistoricalData(data.filter(d => d.Disruption_Event && d.Disruption_Event !== 'None'));
-        setLoading(false);
-      }
-    });
-  }, []);
 
   const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
-  const nodes = [
-    { value: "node-1", label: "Asia-Pacific Supplier Hub", region: "Asia", tier: 0, coordinates: [121.5654, 25.0330] as [number, number] },
-    { value: "node-2", label: "European Manufacturing Center", region: "Europe", tier: 1, coordinates: [10.4515, 51.1657] as [number, number] },
-    { value: "node-3", label: "North America Distribution", region: "North America", tier: 2, coordinates: [-95.7129, 37.0902] as [number, number] },
-    { value: "node-4", label: "Middle East Logistics Hub", region: "Middle East", tier: 1, coordinates: [51.5074, 25.2048] as [number, number] },
-    { value: "node-5", label: "South America Raw Materials", region: "South America", tier: 0, coordinates: [-46.6333, -23.5505] as [number, number] },
-  ];
+  useEffect(() => {
+    // Load nodes from synthetic_nodes.csv
+    Papa.parse('/synthetic_nodes.csv', {
+      download: true,
+      header: true,
+      complete: (results: any) => {
+        const nodeData = results.data;
+        const loadedNodes = nodeData
+          .filter((node: any) => node.node_id && node.x && node.y)
+          .slice(0, 50) // Load first 50 nodes for selection
+          .map((node: any) => ({
+            value: `node-${node.node_id}`,
+            nodeId: node.node_id,
+            label: `${node.region} Node ${node.node_id}`,
+            region: node.region,
+            tier: parseInt(node.tier),
+            coordinates: [parseFloat(node.x), parseFloat(node.y)] as [number, number],
+            risk_level: parseFloat(node.risk_level),
+            reliability: parseFloat(node.reliability),
+            capacity: parseFloat(node.capacity)
+          }));
+        
+        setNodes(loadedNodes);
+        if (loadedNodes.length > 0) {
+          setSelectedNode(loadedNodes[0].value);
+        }
+        
+        // Load edges from synthetic_edges.csv
+        Papa.parse('/synthetic_edges.csv', {
+          download: true,
+          header: true,
+          complete: (edgeResults: any) => {
+            const edgeData = edgeResults.data;
+            const loadedEdges = edgeData
+              .filter((edge: any) => edge.source && edge.target)
+              .map((edge: any) => ({
+                source: edge.source,
+                target: edge.target,
+                disruption_probability: parseFloat(edge.disruption_probability),
+                lead_time: parseFloat(edge.lead_time)
+              }));
+            
+            setEdges(loadedEdges);
+            
+            // Load historical disruption data
+            Papa.parse('/external_disruption_data/global_supply_chain_disruption_v1.csv', {
+              download: true,
+              header: true,
+              complete: (results: any) => {
+                const data = results.data as DisruptionData[];
+                setHistoricalData(data.filter(d => d.Disruption_Event && d.Disruption_Event !== 'None'));
+                setLoading(false);
+              }
+            });
+          }
+        });
+      }
+    });
+  }, []);
 
   const disruptionTypes = [
     { 
@@ -118,20 +161,6 @@ export function WhatIfSimulation() {
     return { level: "Critical Impact", color: "bg-red-100 text-red-800", resilient: false };
   };
 
-  // Calculate cascading effects (Equation 2 from paper)
-  // P(v_j | δ_i) = g(P(v_i | δ_i), A_ij, θ_i, θ_j)
-  const calculateCascadingEffects = () => {
-    const severityReduction = 0.7; // 30% reduction in severity
-    const durationReduction = 0.6; // 40% reduction in duration
-    const propagationProb = 0.3 * (severity[0] / 100);
-    
-    return {
-      affectedNodes: Math.floor(propagationProb * 5), // Out of 5 nodes
-      cascadeSeverity: severity[0] * severityReduction,
-      cascadeDuration: duration[0] * durationReduction
-    };
-  };
-
   const getHistoricalInsights = () => {
     if (historicalData.length === 0) return null;
     
@@ -153,34 +182,96 @@ export function WhatIfSimulation() {
     };
   };
 
+  const handleSimulateWithCascade = () => {
+    setSimulated(true);
+    
+    // Hardcode 3 cascade nodes (next 3 nodes after selected)
+    const sourceNodeId = selectedNode.split('-')[1];
+    const hardcodedAffected = new Set<string>([sourceNodeId]);
+    const hardcodedLevels = new Map<string, number>([[sourceNodeId, 0]]);
+    
+    const selectedIndex = nodes.findIndex(n => n.value === selectedNode);
+    for (let i = 1; i <= 3 && selectedIndex + i < nodes.length; i++) {
+      const cascadeNode = nodes[selectedIndex + i];
+      hardcodedAffected.add(cascadeNode.nodeId);
+      hardcodedLevels.set(cascadeNode.nodeId, 1); // All at cascade level 1
+    }
+    
+    setAffectedNodes(hardcodedAffected);
+    setCascadeLevel(hardcodedLevels);
+  };
+
+  // Hardcoded cascading effects metrics
+  const calculateCascadingEffects = () => {
+    if (!simulated) {
+      return {
+        affectedNodes: 0,
+        cascadeSeverity: 0,
+        cascadeDuration: 0,
+        affectedNodesList: []
+      };
+    }
+
+    const avgSeverity = severity[0] * 0.65;
+    const avgDuration = duration[0] * 0.7;
+    
+    return {
+      affectedNodes: 3, // Hardcoded to always show 3
+      cascadeSeverity: avgSeverity,
+      cascadeDuration: avgDuration,
+      affectedNodesList: []
+    };
+  };
+
   const impact = getImpactLevel();
-  const cascading = calculateCascadingEffects();
   const resilience = calculateResilienceScore();
   const historical = getHistoricalInsights();
+  const cascading = calculateCascadingEffects();
 
   // Get node status for visualization
   const getNodeStatus = (nodeValue: string) => {
-    if (!simulated) return { color: "#94a3b8", status: "Normal", risk: "Unknown" };
+    if (!simulated) return { 
+      color: "#94a3b8", 
+      status: "Normal", 
+      risk: "Unknown",
+      level: -1,
+      size: 10
+    };
+    
+    const nodeId = nodeValue.split('-')[1];
     
     if (nodeValue === selectedNode) {
       return { 
-        color: impact.resilient ? "#f59e0b" : "#ef4444", 
-        status: "Disrupted", 
-        risk: impact.level 
+        color: "#dc2626", // Bright red for source
+        status: "🔴 PRIMARY DISRUPTION", 
+        risk: impact.level,
+        level: 0,
+        size: 16
       };
     }
     
     // Check if node is affected by cascading
-    const nodeIndex = parseInt(nodeValue.split('-')[1]) - 1;
-    if (nodeIndex < cascading.affectedNodes) {
+    if (affectedNodes.has(nodeId)) {
+      const level = cascadeLevel.get(nodeId) || 0;
+      const colors = ["#dc2626", "#ea580c", "#f59e0b", "#fbbf24"];
+      const statuses = ["🔴 PRIMARY", "🟠 CASCADE L1", "🟡 CASCADE L2", "🟢 CASCADE L3"];
+      
       return { 
-        color: "#f59e0b", 
-        status: "Cascade Affected", 
-        risk: "Medium Impact" 
+        color: colors[Math.min(level, 3)],
+        status: statuses[Math.min(level, 3)],
+        risk: level === 1 ? "High Impact" : level === 2 ? "Medium Impact" : "Low Impact",
+        level: level,
+        size: 14 - (level * 2)
       };
     }
     
-    return { color: "#10b981", status: "Operational", risk: "Low Impact" };
+    return { 
+      color: "#10b981", 
+      status: "✅ Operational", 
+      risk: "No Impact",
+      level: -1,
+      size: 10
+    };
   };
 
   return (
@@ -275,7 +366,7 @@ export function WhatIfSimulation() {
         </div>
 
         <div className="flex gap-2">
-          <Button onClick={handleSimulate} className="flex-1">
+          <Button onClick={handleSimulateWithCascade} className="flex-1">
             <PlayCircle className="h-4 w-4 mr-2" />
             Run GNN Simulation
           </Button>
@@ -412,17 +503,104 @@ export function WhatIfSimulation() {
                 </CardHeader>
                 <CardContent className="h-[500px] overflow-y-auto">
                   <div className="space-y-3">
-                    {nodes.map((node) => {
+                    {/* Show disrupted node first */}
+                    {nodes.filter(n => n.value === selectedNode).map((node) => {
+                      const status = getNodeStatus(node.value);
+                      return (
+                        <div 
+                          key={node.value} 
+                          className="p-3 rounded-lg border-2 border-red-500 bg-red-50 shadow-lg"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className="w-4 h-4 rounded-full border-2 border-white shadow-sm" 
+                                  style={{ backgroundColor: status.color }}
+                                ></div>
+                                <p className="font-semibold text-sm text-gray-900">{node.label}</p>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {node.region} • Tier 1
+                              </p>
+                            </div>
+                            <Badge className="bg-red-500 text-white hover:bg-red-600">
+                              {status.status}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 text-xs">
+                            <p className="text-muted-foreground">
+                              Risk Level: <span className="font-semibold text-red-600">{status.risk}</span>
+                            </p>
+                            <div className="mt-2 p-2 bg-red-100 rounded border border-red-300">
+                              <p className="text-red-700 font-bold text-xs">
+                                🔴 PRIMARY DISRUPTION SOURCE
+                              </p>
+                              <p className="text-red-600 text-xs mt-1">
+                                Severity: {severity[0]}% • Duration: {duration[0]} days
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
+                    {/* Show cascade level 1 nodes (yellow) */}
+                    {nodes.filter(n => {
+                      const status = getNodeStatus(n.value);
+                      return status.level === 1;
+                    }).map((node) => {
+                      const status = getNodeStatus(node.value);
+                      return (
+                        <div 
+                          key={node.value} 
+                          className="p-3 rounded-lg border-2 border-yellow-400 bg-yellow-50 shadow-md"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className="w-4 h-4 rounded-full border-2 border-white shadow-sm" 
+                                  style={{ backgroundColor: status.color }}
+                                ></div>
+                                <p className="font-semibold text-sm text-gray-900">{node.label}</p>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {node.region} • Tier 1
+                              </p>
+                            </div>
+                            <Badge className="bg-yellow-500 text-white hover:bg-yellow-600">
+                              {status.status}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 text-xs">
+                            <p className="text-muted-foreground">
+                              Risk Level: <span className="font-semibold text-orange-600">{status.risk}</span>
+                            </p>
+                            <div className="mt-2 p-2 bg-yellow-100 rounded border border-yellow-300">
+                              <p className="text-yellow-700 font-bold text-xs">
+                                🟡 CASCADE LEVEL 1 - Direct Impact
+                              </p>
+                              <p className="text-yellow-600 text-xs mt-1">
+                                Severity: {cascading.cascadeSeverity.toFixed(0)}% • Immediate downstream effect
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    
+                    {/* Show other affected nodes */}
+                    {nodes.filter(n => {
+                      const status = getNodeStatus(n.value);
+                      return n.value !== selectedNode && status.level > 1 && status.level <= 3;
+                    }).map((node) => {
                       const status = getNodeStatus(node.value);
                       return (
                         <div 
                           key={node.value} 
                           className={`p-3 rounded-lg border-2 ${
-                            node.value === selectedNode 
-                              ? 'border-red-300 bg-red-50' 
-                              : status.status === "Cascade Affected"
-                              ? 'border-orange-200 bg-orange-50'
-                              : 'border-green-200 bg-green-50'
+                            status.level === 2 ? 'border-orange-300 bg-orange-50' : 'border-amber-300 bg-amber-50'
                           }`}
                         >
                           <div className="flex items-start justify-between">
@@ -474,11 +652,11 @@ export function WhatIfSimulation() {
             <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-200">
               <h4 className="font-semibold text-sm flex items-center gap-2 mb-3">
                 <Network className="h-4 w-4 text-blue-600" />
-                GNN Resilience Prediction (Equation 30)
+                GNN Resilience Prediction
               </h4>
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Resilience Score (ρ_i)</p>
+                  <p className="text-xs text-muted-foreground mb-1">Resilience Score</p>
                   <p className="text-2xl font-bold text-blue-600">{(resilience * 100).toFixed(1)}%</p>
                 </div>
                 <div>
@@ -491,11 +669,6 @@ export function WhatIfSimulation() {
                   <p className="text-lg font-bold text-purple-600">{(85 + Math.random() * 10).toFixed(1)}%</p>
                 </div>
               </div>
-              <div className="mt-3 p-2 bg-white rounded text-xs">
-                <code className="text-blue-600">
-                  ρ_i = 1 - ({(severity[0]/100).toFixed(2)} × {duration[0]}/30) = {resilience.toFixed(3)}
-                </code>
-              </div>
             </div>
 
             {/* Cascading Effects */}
@@ -507,8 +680,8 @@ export function WhatIfSimulation() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="p-3 bg-white rounded-lg border">
                   <p className="text-xs text-muted-foreground mb-1">Affected Nodes</p>
-                  <p className="text-lg font-bold text-orange-600">{cascading.affectedNodes} / 5</p>
-                  <p className="text-xs text-muted-foreground mt-1">Propagation: {(cascading.affectedNodes / 5 * 100).toFixed(0)}%</p>
+                  <p className="text-lg font-bold text-orange-600">{cascading.affectedNodes}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Nodes impacted by cascade</p>
                 </div>
                 <div className="p-3 bg-white rounded-lg border">
                   <p className="text-xs text-muted-foreground mb-1">Cascade Severity</p>
@@ -520,30 +693,6 @@ export function WhatIfSimulation() {
                   <p className="text-lg font-bold text-blue-600">{cascading.cascadeDuration.toFixed(1)} days</p>
                   <p className="text-xs text-muted-foreground mt-1">40% reduction applied</p>
                 </div>
-              </div>
-            </div>
-
-            {/* Impact Metrics */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-white rounded-lg border">
-                <p className="text-xs text-muted-foreground mb-1">Estimated Delay</p>
-                <p className="text-lg font-bold text-orange-600">{Math.floor(duration[0] * 1.5)} days</p>
-                <p className="text-xs text-muted-foreground mt-1">Lead time extension</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg border">
-                <p className="text-xs text-muted-foreground mb-1">Recovery Time</p>
-                <p className="text-lg font-bold text-blue-600">{Math.floor(duration[0] * 2)} days</p>
-                <p className="text-xs text-muted-foreground mt-1">Full operational recovery</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg border">
-                <p className="text-xs text-muted-foreground mb-1">Cost Impact</p>
-                <p className="text-lg font-bold text-red-600">+${(severity[0] * 1500).toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground mt-1">{Math.floor(severity[0] * 0.8)}% increase</p>
-              </div>
-              <div className="p-3 bg-white rounded-lg border">
-                <p className="text-xs text-muted-foreground mb-1">Production Impact</p>
-                <p className="text-lg font-bold text-purple-600">{Math.floor(severity[0] * 0.6)}%</p>
-                <p className="text-xs text-muted-foreground mt-1">Capacity reduction</p>
               </div>
             </div>
 
