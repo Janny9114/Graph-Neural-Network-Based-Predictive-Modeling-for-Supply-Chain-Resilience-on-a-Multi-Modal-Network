@@ -1,0 +1,20 @@
+{
+  "num_scenarios": 10000,
+  "num_nodes": 200,
+  "num_features": 5,
+  "feature_names": [
+    "capacity",
+    "cost_factor",
+    "risk_level",
+    "reliability",
+    "buffer"
+  ],
+  "feature_description": {
+    "capacity": "Node production capacity (all nodes)",
+    "cost_factor": "Operational cost factor (all nodes)",
+    "risk_level": "Baseline vulnerability (all nodes)",
+    "reliability": "Historical performance (all nodes)",
+    "buffer": "Available inventory - ALL nodes know this (realistic)"
+  },
+  "label_logic": "Label 1 (Resilient) if buffer >= (capacity * production_impact_pct), else 0 (Failed). NOTE: production_impact_pct is HIDDEN - not in features!"
+}
