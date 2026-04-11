@@ -355,6 +355,10 @@ def generate_edge_features(
         region_v = node_df.loc[v, "region"]
         tier_u = node_df.loc[u, "tier"]
         tier_v = node_df.loc[v, "tier"]
+        
+        # Get coordinates for distance calculation
+        x_u, y_u = node_df.loc[u, "x"], node_df.loc[u, "y"]
+        x_v, y_v = node_df.loc[v, "x"], node_df.loc[v, "y"]
 
         # Hierarchical flow quantities based on tier connection
         if tier_u == 0 and tier_v == 1:
@@ -370,15 +374,44 @@ def generate_edge_features(
             # Fallback for any other connections
             flow = np.random.uniform(1000, 10000)
 
-        # Domestic vs international
+        # Calculate geographic distance (Euclidean approximation)
+        # This is a rough approximation: 1 degree ≈ 111 km
+        distance = np.sqrt((x_v - x_u)**2 + (y_v - y_u)**2) * 111
+        
+        # Lead time based on real data distribution AND geographic distance
+        # Real data: mean=17.5 days, std=10.9 days, range=2-35 days
         if region_u == region_v:
-            lt = np.random.normal(loc=3, scale=1.0)   # short lead time
+            # Domestic: shorter lead times (2-18 days)
+            base_lt = 10
+            lt = np.random.normal(loc=base_lt, scale=4.0)
+            lt = np.clip(lt, 2, 18)
             cost = np.random.normal(loc=100, scale=20)
         else:
-            lt = np.random.normal(loc=10, scale=3.0)  # longer lead time
-            cost = np.random.normal(loc=300, scale=50)
+            # International: lead time scales with distance
+            # Short distance (e.g., China to India): 12-20 days
+            # Medium distance (e.g., China to Europe): 20-28 days  
+            # Long distance (e.g., China to US): 25-35 days
+            
+            if distance < 3000:  # Short international (< 3000 km)
+                base_lt = 15
+                lt_std = 3.0
+                lt_min, lt_max = 12, 20
+            elif distance < 8000:  # Medium international (3000-8000 km)
+                base_lt = 22
+                lt_std = 4.0
+                lt_min, lt_max = 18, 28
+            else:  # Long international (> 8000 km)
+                base_lt = 28
+                lt_std = 4.0
+                lt_min, lt_max = 22, 35
+            
+            lt = np.random.normal(loc=base_lt, scale=lt_std)
+            lt = np.clip(lt, lt_min, lt_max)
+            
+            # Cost also scales with distance
+            cost = np.random.normal(loc=200 + distance * 0.05, scale=50)
 
-        lt = max(1.0, lt)
+        lt = max(2.0, lt)  # Minimum 2 days (matches real data)
         cost = max(20.0, cost)
 
         # Capacity share: fraction of upstream node's capacity sent to this downstream
