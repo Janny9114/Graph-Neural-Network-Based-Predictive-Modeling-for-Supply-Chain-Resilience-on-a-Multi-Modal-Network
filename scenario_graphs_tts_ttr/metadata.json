@@ -1,0 +1,24 @@
+{
+  "num_scenarios": 10000,
+  "num_nodes": 200,
+  "num_edges": 283,
+  "num_features": 6,
+  "feature_names": [
+    "capacity",
+    "cost_factor",
+    "risk_level",
+    "reliability",
+    "buffer",
+    "incoming_shock"
+  ],
+  "scenario_types": {
+    "central": 2510,
+    "high_risk": 2502,
+    "random": 2511,
+    "high_capacity": 2477
+  },
+  "total_resilient": 13917,
+  "total_failed": 22385,
+  "labeling_logic": "TTS_vs_TTR",
+  "description": "Labels based on physical buffer absorption. Resilient if buffer >= shock, Failed otherwise."
+}
