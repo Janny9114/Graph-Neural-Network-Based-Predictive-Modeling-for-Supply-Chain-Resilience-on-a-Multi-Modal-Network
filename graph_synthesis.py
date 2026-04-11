@@ -535,7 +535,7 @@ if __name__ == "__main__":
 
     data = build_synthetic_supply_chain_graph(
         n_tiers=4,
-        base_per_tier=5,  # Changed from 20 to 500 for 5000 nodes
+        base_per_tier=20,  # Changed from 20 to 500 for 5000 nodes
         tier_scaling=[3.0, 2.5, 2.0, 2.5],
         avg_degree_between_tiers=3.0,
         seed=123
