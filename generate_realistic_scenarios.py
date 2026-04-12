@@ -610,47 +610,28 @@ class RealisticDisruptionSimulator:
         - NO production_impact_pct (hidden from everyone)
         - NO is_disrupted flag (must infer from graph)
         - Includes x,y coordinates for spatial analysis
-        - ALL FEATURES NORMALIZED with StandardScaler
         
         Features (7 total):
-        [0] capacity (normalized)
-        [1] cost_factor (normalized)
-        [2] risk_level (normalized)
-        [3] reliability (normalized)
-        [4] x (longitude, normalized)
-        [5] y (latitude, normalized)
-        [6] buffer (normalized per scenario)
+        [0] capacity
+        [1] cost_factor
+        [2] risk_level
+        [3] reliability
+        [4] x (longitude)
+        [5] y (latitude)
+        [6] buffer (ALL nodes)
         
         GNN must use graph structure to infer:
         - Which node is disrupted
         - Impact magnitude
         - Cascade patterns
         """
-        print("\n💾 Creating PyG Data objects with NORMALIZED features...")
+        print("\n💾 Creating PyG Data objects with HARDER feature design + spatial coordinates...")
         
         # Prepare base features (first 6 features including x,y)
-        from sklearn.preprocessing import StandardScaler
-        
-        base_features_raw = node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values
-        
-        # Normalize base features with StandardScaler
-        scaler = StandardScaler()
-        base_features_normalized = scaler.fit_transform(base_features_raw)
-        base_features = torch.tensor(base_features_normalized, dtype=torch.float)
-        
-        print(f"  ✓ Normalized base features with StandardScaler")
-        print(f"    - Mean: {base_features.mean(dim=0).numpy()}")
-        print(f"    - Std:  {base_features.std(dim=0).numpy()}")
-        
-        # Calculate buffer statistics for normalization
-        all_buffers = []
-        for scenario in scenarios:
-            for result in scenario['results'].values():
-                all_buffers.append(result['buffer'])
-        
-        buffer_mean = np.mean(all_buffers)
-        buffer_std = np.std(all_buffers)
-        print(f"  ✓ Buffer normalization: mean={buffer_mean:.2f}, std={buffer_std:.2f}")
+        base_features = torch.tensor(
+            node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values,
+            dtype=torch.float
+        )
         
         # Create edge_index
         edge_index = torch.tensor([
@@ -670,12 +651,26 @@ class RealisticDisruptionSimulator:
             y = torch.full((num_nodes,), -1, dtype=torch.long)
             train_mask = torch.zeros(num_nodes, dtype=torch.bool)
             
+            # Collect buffers for this scenario to normalize
+            scenario_buffers = {}
+            for node_id, result in scenario['results'].items():
+                scenario_buffers[int(node_id)] = result['buffer']
+            
+            # Normalize buffers for this scenario (Z-score)
+            if len(scenario_buffers) > 0:
+                buffer_values = list(scenario_buffers.values())
+                buffer_mean = np.mean(buffer_values)
+                buffer_std = np.std(buffer_values)
+                if buffer_std == 0:
+                    buffer_std = 1.0  # Avoid division by zero
+            
             # Fill in scenario-specific data
             for node_id, result in scenario['results'].items():
                 node_id = int(node_id)
                 
-                # Feature 6: buffer (ALL nodes know this) - index 6 because we have capacity, cost, risk, reliability, x, y, buffer
-                x[node_id, 6] = result['buffer']
+                # Feature 6: buffer (normalized per scenario)
+                buffer_normalized = (result['buffer'] - buffer_mean) / buffer_std
+                x[node_id, 6] = buffer_normalized
                 
                 # NO production_impact_pct - hidden from everyone
                 # NO is_disrupted flag - must infer from graph

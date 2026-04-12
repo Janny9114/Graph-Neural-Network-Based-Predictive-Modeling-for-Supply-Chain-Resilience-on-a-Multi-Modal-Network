@@ -273,7 +273,7 @@ def evaluate(model, loader, device):
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
 
-def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, num_epochs=50, patience=10):
+def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, num_epochs=200, patience=20):
     """Train model with early stopping."""
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
@@ -323,7 +323,23 @@ def main():
     test_loader = DataLoader(test_scenarios, batch_size=32, shuffle=False)
     
     in_channels = metadata['num_features']
-    class_weights = torch.tensor([1.3, 1.0], dtype=torch.float).to(device)
+    
+    # Calculate balanced class weights from training data
+    print("\nCalculating balanced class weights...")
+    train_labels = []
+    for data in train_scenarios:
+        train_labels.extend(data.y[data.train_mask].numpy())
+    
+    from sklearn.utils.class_weight import compute_class_weight
+    class_weight_values = compute_class_weight(
+        'balanced',
+        classes=np.unique(train_labels),
+        y=train_labels
+    )
+    class_weights = torch.tensor(class_weight_values, dtype=torch.float).to(device)
+    print(f"  ✓ Class weights: {class_weights.cpu().numpy()}")
+    print(f"    Class 0 (Failed): {class_weights[0]:.3f}")
+    print(f"    Class 1 (Resilient): {class_weights[1]:.3f}")
     
     # Define models
     models = {
