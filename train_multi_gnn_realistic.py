@@ -32,27 +32,27 @@ class GATModel(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3):
         super(GATModel, self).__init__()
         self.conv1 = GATConv(in_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
-        self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
+        #self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv2 = GATConv(hidden_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
-        self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
+        #self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv3 = GATConv(hidden_channels, hidden_channels, heads=1, dropout=dropout)
-        self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
+        #self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
         self.fc = torch.nn.Linear(hidden_channels, 2)
         self.dropout = dropout
     
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
-        x = self.bn1(x)
+        #x = self.bn1(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
         x = self.conv2(x, edge_index)
-        x = self.bn2(x)
+        #x = self.bn2(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
         x = self.conv3(x, edge_index)
-        x = self.bn3(x)
+        #x = self.bn3(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
@@ -354,7 +354,7 @@ def main():
     # Train each model
     for model_name, model in models.items():
         model = model.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
         
         # Train
         best_val_f1 = train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights)

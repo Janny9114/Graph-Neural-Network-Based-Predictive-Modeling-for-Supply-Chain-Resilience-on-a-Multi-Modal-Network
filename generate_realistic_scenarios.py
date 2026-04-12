@@ -692,16 +692,36 @@ class RealisticDisruptionSimulator:
             data.scenario_type = scenario['scenario_type']
             
             # Handle initial_node and initial_impact_pct (can be scalar or list)
-            if isinstance(scenario['initial_node'], list):
-                # Multi-node scenario: store as tensor
-                data.initial_nodes = torch.tensor(scenario['initial_node'], dtype=torch.long)
-                data.initial_impacts = torch.tensor(scenario['initial_impact_pct'], dtype=torch.float)
-                data.num_initial_disruptions = len(scenario['initial_node'])
+            # For edge-only scenarios, initial_node may not exist
+            if 'initial_node' in scenario and scenario['initial_node'] is not None:
+                if isinstance(scenario['initial_node'], list):
+                    # Multi-node scenario: store as tensor
+                    data.initial_nodes = torch.tensor(scenario['initial_node'], dtype=torch.long)
+                    data.initial_impacts = torch.tensor(scenario['initial_impact_pct'], dtype=torch.float)
+                    data.num_initial_disruptions = len(scenario['initial_node'])
+                else:
+                    # Single-node scenario: store as scalar
+                    data.initial_nodes = torch.tensor([scenario['initial_node']], dtype=torch.long)
+                    data.initial_impacts = torch.tensor([scenario['initial_impact_pct']], dtype=torch.float)
+                    data.num_initial_disruptions = 1
             else:
-                # Single-node scenario: store as scalar
-                data.initial_nodes = torch.tensor([scenario['initial_node']], dtype=torch.long)
-                data.initial_impacts = torch.tensor([scenario['initial_impact_pct']], dtype=torch.float)
-                data.num_initial_disruptions = 1
+                # Edge-only scenario: no initial node disruption
+                data.initial_nodes = torch.tensor([], dtype=torch.long)
+                data.initial_impacts = torch.tensor([], dtype=torch.float)
+                data.num_initial_disruptions = 0
+            
+            # Handle initial_edges for edge disruption scenarios
+            if 'initial_edges' in scenario and scenario['initial_edges'] is not None:
+                if isinstance(scenario['initial_edges'], list) and len(scenario['initial_edges']) > 0:
+                    # Store edge disruptions as list of tuples
+                    data.initial_edges = scenario['initial_edges']
+                    data.num_initial_edge_disruptions = len(scenario['initial_edges'])
+                else:
+                    data.initial_edges = []
+                    data.num_initial_edge_disruptions = 0
+            else:
+                data.initial_edges = []
+                data.num_initial_edge_disruptions = 0
             
             data_objects.append(data)
         
