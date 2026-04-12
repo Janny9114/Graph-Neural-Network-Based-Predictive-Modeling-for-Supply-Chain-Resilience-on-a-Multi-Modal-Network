@@ -122,9 +122,9 @@ def prepare_edge_features(edge_df: pd.DataFrame) -> torch.Tensor:
     """
     Convert edge DataFrame to PyTorch tensor for edge attributes.
     
-    Features included:
-    - lead_time (normalized)
-    - transport_cost (normalized)
+    Features included (ALL Z-score normalized):
+    - lead_time
+    - transport_cost
     - capacity_share
     - disruption_probability
     
@@ -134,28 +134,24 @@ def prepare_edge_features(edge_df: pd.DataFrame) -> torch.Tensor:
     Returns:
         Tensor of shape [num_edges, num_edge_features]
     """
+    from graph_preprocessing import normalize_edge_features
+    
     # Select edge features
     feature_columns = ['lead_time', 'transport_cost', 'capacity_share', 'disruption_probability']
     
-    # Extract features
-    features = edge_df[feature_columns].values
+    # Normalize edge features with Z-score (proper normalization)
+    print(f"\n🔧 Normalizing edge features with Z-score...")
+    normalized_edge_df = normalize_edge_features(edge_df, feature_columns)
     
-    # Normalize lead_time (min-max scaling)
-    lead_time_col = features[:, 0]
-    lt_min = lead_time_col.min()
-    lt_max = lead_time_col.max()
-    features[:, 0] = (lead_time_col - lt_min) / (lt_max - lt_min)
-    
-    # Normalize transport_cost (min-max scaling)
-    cost_col = features[:, 1]
-    cost_min = cost_col.min()
-    cost_max = cost_col.max()
-    features[:, 1] = (cost_col - cost_min) / (cost_max - cost_min)
+    # Extract normalized features
+    features = normalized_edge_df[feature_columns].values
     
     # Convert to tensor
     edge_features = torch.tensor(features, dtype=torch.float)
     
     print(f"Edge features shape: {edge_features.shape}")
+    print(f"  ✓ All {len(feature_columns)} features Z-score normalized (mean≈0, std≈1)")
+    
     return edge_features
 
 

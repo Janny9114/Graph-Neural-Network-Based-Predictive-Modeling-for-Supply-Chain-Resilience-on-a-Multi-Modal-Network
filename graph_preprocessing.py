@@ -346,6 +346,49 @@ def preprocess_edge_flows_by_type(
     return edge_type_flows
 
 
+def normalize_edge_features(
+    edge_df: pd.DataFrame,
+    feature_columns: list = None
+) -> pd.DataFrame:
+    """
+    Normalize edge features with Z-score standardization.
+    
+    Args:
+        edge_df: DataFrame with edge features
+        feature_columns: List of columns to normalize (if None, auto-detect numerical columns)
+        
+    Returns:
+        DataFrame with normalized edge features
+    """
+    from sklearn.preprocessing import StandardScaler
+    
+    if feature_columns is None:
+        # Auto-detect numerical columns (exclude source, target, edge identifiers)
+        exclude_cols = ['source', 'target', 'edge_id', 'source_tier', 'target_tier']
+        feature_columns = [
+            col for col in edge_df.columns 
+            if col not in exclude_cols 
+            and edge_df[col].dtype in ['float64', 'float32', 'int64', 'int32']
+        ]
+    
+    if len(feature_columns) == 0:
+        print("  ⚠ No edge features to normalize")
+        return edge_df
+    
+    # Create copy
+    normalized_df = edge_df.copy()
+    
+    # Normalize each feature
+    scaler = StandardScaler()
+    normalized_df[feature_columns] = scaler.fit_transform(edge_df[feature_columns])
+    
+    print(f"  ✓ Normalized {len(feature_columns)} edge features: {feature_columns}")
+    print(f"    Mean: {normalized_df[feature_columns].mean().values}")
+    print(f"    Std: {normalized_df[feature_columns].std().values}")
+    
+    return normalized_df
+
+
 def preprocess_edge_flows(
     edge_df: pd.DataFrame,
     flow_column: str = 'flow_quantity'
