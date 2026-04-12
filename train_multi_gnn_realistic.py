@@ -1,17 +1,20 @@
 """
 Multi-GNN Architecture Training for Supply Chain Resilience
-Trains and compares multiple GNN architectures: GAT, GCN, GraphSAGE, GIN
+Trains and compares multiple GNN architectures: GAT, GCN, GraphSAGE, GIN, TransformerConv, GINE
 
 Architectures:
 1. GAT (Graph Attention Network) - Attention-based aggregation
 2. GCN (Graph Convolutional Network) - Simple spectral convolution
 3. GraphSAGE - Sampling-based aggregation
 4. GIN (Graph Isomorphism Network) - Most expressive GNN
+5. TransformerConv - Edge-aware attention (NEW)
+6. GINE - Edge-aware GIN (NEW)
 """
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, GCNConv, SAGEConv, GINConv
+from torch_geometric.nn import GATConv, GCNConv, SAGEConv, GINConv, TransformerConv, GINEConv
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 import pandas as pd
@@ -28,8 +31,8 @@ from tqdm import tqdm
 # ============================================================================
 
 class GATModel(torch.nn.Module):
-    """Graph Attention Network"""
-    def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3):
+    """Graph Attention Network - NOW SUPPORTS 4-CLASS CLASSIFICATION"""
+    def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=4):
         super(GATModel, self).__init__()
         self.conv1 = GATConv(in_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
         #self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -37,7 +40,7 @@ class GATModel(torch.nn.Module):
         #self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv3 = GATConv(hidden_channels, hidden_channels, heads=1, dropout=dropout)
         #self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
-        self.fc = torch.nn.Linear(hidden_channels, 2)
+        self.fc = torch.nn.Linear(hidden_channels, num_classes)  # ✅ Changed from 2 to num_classes
         self.dropout = dropout
     
     def forward(self, x, edge_index):
@@ -179,6 +182,151 @@ class GINModel(torch.nn.Module):
         return F.log_softmax(x, dim=1)
 
 
+class TransformerConvModel(torch.nn.Module):
+    """
+    Edge-Aware TransformerConv with Skip Connections
+    - Uses edge features (lead_time, cost, capacity_share, disruption_prob)
+    - Skip connections preserve original node features
+    - 3 layers match supply chain cascade depth
+    """
+    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, num_heads=4, dropout=0.3):
+        super(TransformerConvModel, self).__init__()
+        
+        # Layer 1: 1-hop neighbors
+        self.conv1 = TransformerConv(
+            in_channels, 
+            hidden_channels,
+            heads=num_heads,
+            edge_dim=edge_dim,  # ✅ Edge-aware!
+            concat=True,
+            beta=True  # Gating mechanism
+        )
+        self.ln1 = nn.LayerNorm(hidden_channels * num_heads)
+        
+        # Layer 2: 2-hop neighbors
+        self.conv2 = TransformerConv(
+            hidden_channels * num_heads,
+            hidden_channels,
+            heads=num_heads,
+            edge_dim=edge_dim,
+            concat=True,
+            beta=True
+        )
+        self.ln2 = nn.LayerNorm(hidden_channels * num_heads)
+        
+        # Layer 3: 3-hop neighbors
+        self.conv3 = TransformerConv(
+            hidden_channels * num_heads,
+            hidden_channels,
+            heads=1,
+            edge_dim=edge_dim,
+            concat=False,
+            beta=True
+        )
+        self.ln3 = nn.LayerNorm(hidden_channels)
+        
+        # Final layer with skip connection
+        self.fc = nn.Linear(hidden_channels + in_channels, 2)  # ✅ Skip connection!
+        self.dropout = dropout
+    
+    def forward(self, x, edge_index, edge_attr=None):
+        x_original = x  # ✅ Save for skip connection
+        
+        # Layer 1
+        x = self.conv1(x, edge_index, edge_attr)
+        x = self.ln1(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Layer 2
+        x = self.conv2(x, edge_index, edge_attr)
+        x = self.ln2(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Layer 3
+        x = self.conv3(x, edge_index, edge_attr)
+        x = self.ln3(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Skip connection: Concatenate with original features
+        x = torch.cat([x, x_original], dim=1)  # ✅ [64 + in_channels]
+        
+        # Output
+        x = self.fc(x)
+        return F.log_softmax(x, dim=1)
+
+
+class GINEModel(torch.nn.Module):
+    """
+    Edge-Aware GINE (Graph Isomorphism Network with Edges) with Skip Connections
+    - Most expressive GNN + edge features
+    - Skip connections preserve original node features
+    """
+    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, dropout=0.3):
+        super(GINEModel, self).__init__()
+        
+        # Layer 1
+        nn1 = nn.Sequential(
+            nn.Linear(in_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels)
+        )
+        self.conv1 = GINEConv(nn1, edge_dim=edge_dim)  # ✅ Edge-aware!
+        self.bn1 = nn.BatchNorm1d(hidden_channels)
+        
+        # Layer 2
+        nn2 = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels)
+        )
+        self.conv2 = GINEConv(nn2, edge_dim=edge_dim)
+        self.bn2 = nn.BatchNorm1d(hidden_channels)
+        
+        # Layer 3
+        nn3 = nn.Sequential(
+            nn.Linear(hidden_channels, hidden_channels),
+            nn.ReLU(),
+            nn.Linear(hidden_channels, hidden_channels)
+        )
+        self.conv3 = GINEConv(nn3, edge_dim=edge_dim)
+        self.bn3 = nn.BatchNorm1d(hidden_channels)
+        
+        # Final layer with skip connection
+        self.fc = nn.Linear(hidden_channels + in_channels, 2)  # ✅ Skip connection!
+        self.dropout = dropout
+    
+    def forward(self, x, edge_index, edge_attr=None):
+        x_original = x  # ✅ Save for skip connection
+        
+        # Layer 1
+        x = self.conv1(x, edge_index, edge_attr)
+        x = self.bn1(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Layer 2
+        x = self.conv2(x, edge_index, edge_attr)
+        x = self.bn2(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Layer 3
+        x = self.conv3(x, edge_index, edge_attr)
+        x = self.bn3(x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Skip connection: Concatenate with original features
+        x = torch.cat([x, x_original], dim=1)  # ✅ [64 + in_channels]
+        
+        # Output
+        x = self.fc(x)
+        return F.log_softmax(x, dim=1)
+
+
 # ============================================================================
 # TRAINING FUNCTIONS
 # ============================================================================
@@ -218,7 +366,7 @@ def split_scenarios(scenarios, train_ratio=0.7, val_ratio=0.15, seed=42):
     return train_scenarios, val_scenarios, test_scenarios
 
 
-def train_epoch(model, loader, optimizer, device, class_weights):
+def train_epoch(model, loader, optimizer, device, class_weights, use_edge_attr=False):
     """Train for one epoch with class weights."""
     model.train()
     total_loss = 0
@@ -229,7 +377,12 @@ def train_epoch(model, loader, optimizer, device, class_weights):
         data = data.to(device)
         optimizer.zero_grad()
         
-        out = model(data.x, data.edge_index)
+        # Check if model uses edge features
+        if use_edge_attr and hasattr(data, 'edge_attr') and data.edge_attr is not None:
+            out = model(data.x, data.edge_index, data.edge_attr)
+        else:
+            out = model(data.x, data.edge_index)
+        
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask], weight=class_weights)
         
         loss.backward()
@@ -244,7 +397,7 @@ def train_epoch(model, loader, optimizer, device, class_weights):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, use_edge_attr=False):
     """Evaluate model."""
     model.eval()
     total_loss = 0
@@ -254,7 +407,13 @@ def evaluate(model, loader, device):
     
     for data in loader:
         data = data.to(device)
-        out = model(data.x, data.edge_index)
+        
+        # Check if model uses edge features
+        if use_edge_attr and hasattr(data, 'edge_attr') and data.edge_attr is not None:
+            out = model(data.x, data.edge_index, data.edge_attr)
+        else:
+            out = model(data.x, data.edge_index)
+        
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
         
         total_loss += loss.item() * data.train_mask.sum().item()
@@ -273,7 +432,7 @@ def evaluate(model, loader, device):
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
 
-def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, num_epochs=200, patience=20):
+def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr=False, num_epochs=200, patience=20):
     """Train model with early stopping."""
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
@@ -283,8 +442,8 @@ def train_model(model, model_name, train_loader, val_loader, optimizer, device, 
     patience_counter = 0
     
     for epoch in range(1, num_epochs + 1):
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, class_weights)
-        val_loss, val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, device)
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, class_weights, use_edge_attr)
+        val_loss, val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, device, use_edge_attr)
         
         if epoch % 10 == 0 or epoch == 1:
             print(f"Epoch {epoch:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | "
@@ -341,27 +500,43 @@ def main():
     print(f"    Class 0 (Failed): {class_weights[0]:.3f}")
     print(f"    Class 1 (Resilient): {class_weights[1]:.3f}")
     
+    # Check if edge features are available
+    has_edge_features = hasattr(train_scenarios[0], 'edge_attr') and train_scenarios[0].edge_attr is not None
+    edge_dim = train_scenarios[0].edge_attr.shape[1] if has_edge_features else 0
+    
+    print(f"\nEdge features available: {has_edge_features}")
+    if has_edge_features:
+        print(f"Edge feature dimension: {edge_dim}")
+    
     # Define models
     models = {
-        'GAT': GATModel(in_channels, hidden_channels=64, num_heads=4, dropout=0.3),
-        'GCN': GCNModel(in_channels, hidden_channels=64, dropout=0.3),
-        'GraphSAGE': GraphSAGEModel(in_channels, hidden_channels=64, dropout=0.3),
-        'GIN': GINModel(in_channels, hidden_channels=64, dropout=0.3)
+        'GAT': (GATModel(in_channels, hidden_channels=64, num_heads=4, dropout=0.3), False),
+        'GCN': (GCNModel(in_channels, hidden_channels=64, dropout=0.3), False),
+        'GraphSAGE': (GraphSAGEModel(in_channels, hidden_channels=64, dropout=0.3), False),
+        'GIN': (GINModel(in_channels, hidden_channels=64, dropout=0.3), False),
     }
+    
+    # Add edge-aware models if edge features are available
+    if has_edge_features:
+        models['TransformerConv'] = (TransformerConvModel(in_channels, edge_dim=edge_dim, hidden_channels=64, num_heads=4, dropout=0.3), True)
+        models['GINE'] = (GINEModel(in_channels, edge_dim=edge_dim, hidden_channels=64, dropout=0.3), True)
+        print("\n✅ Added edge-aware models: TransformerConv, GINE")
+    else:
+        print("\n⚠️  No edge features found. Skipping edge-aware models.")
     
     results = []
     
     # Train each model
-    for model_name, model in models.items():
+    for model_name, (model, use_edge_attr) in models.items():
         model = model.to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
         
         # Train
-        best_val_f1 = train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights)
+        best_val_f1 = train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr)
         
         # Load best model and evaluate on test set
         model.load_state_dict(torch.load(f'best_{model_name.lower().replace(" ", "_")}_model.pt'))
-        test_loss, test_acc, test_prec, test_rec, test_f1, test_preds, test_labels = evaluate(model, test_loader, device)
+        test_loss, test_acc, test_prec, test_rec, test_f1, test_preds, test_labels = evaluate(model, test_loader, device, use_edge_attr)
         
         print(f"\n{model_name} Test Results:")
         print(f"  Accuracy:  {test_acc:.4f}")

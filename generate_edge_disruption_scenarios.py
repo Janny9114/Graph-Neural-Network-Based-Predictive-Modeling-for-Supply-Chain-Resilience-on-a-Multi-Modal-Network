@@ -65,6 +65,12 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
         """
         Simulate cascade when edges are disrupted.
         
+        NEW APPROACH: Keep edges in graph, mark them as disrupted in edge features
+        
+        IMPROVEMENTS:
+        - Priority 2: Fixed BFS accumulation (nodes can receive multiple disruptions)
+        - Priority 3: Added time dynamics to impact calculation
+        
         Args:
             G: NetworkX graph
             base_buffers: Dict of base buffer values
@@ -72,7 +78,7 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             edge_capacity_reduction: Dict mapping edge to capacity reduction (0.0-1.0)
         
         Returns:
-            Dict with results for each affected node
+            Dict with results for each affected node AND edge disruption info
         """
         # Add stochastic variance to buffers
         buffers = {
@@ -80,30 +86,44 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             for node in G.nodes()
         }
         
-        # Create modified graph with reduced edge capacities
-        G_modified = G.copy()
+        # DON'T modify graph - keep edges intact!
+        # Instead, track disruption info for edge features
+        edge_disruption_info = {}
         for edge, reduction in edge_capacity_reduction.items():
-            if G_modified.has_edge(edge[0], edge[1]):
-                original_weight = G_modified[edge[0]][edge[1]].get('weight', 1.0)
-                G_modified[edge[0]][edge[1]]['weight'] = original_weight * (1 - reduction)
+            if G.has_edge(edge[0], edge[1]):
+                # Store disruption info for this edge
+                edge_disruption_info[edge] = {
+                    'is_disrupted': 1.0,
+                    'disruption_severity': reduction,  # 0.0-1.0
+                    'time_to_recovery': np.random.uniform(3, 30)  # 3-30 days
+                }
         
         # Find all nodes affected by edge disruptions
         affected_nodes = set()
         for edge in disrupted_edges:
             affected_nodes.add(edge[1])  # Target nodes directly affected
         
+        # PRIORITY 2 FIX: Use accumulator instead of visited set
+        # This allows nodes to accumulate shortages from multiple sources
+        from collections import defaultdict
+        shortage_accumulator = defaultdict(float)
+        processed = set()
+        queue = deque([(node, 0.0, 0) for node in affected_nodes])  # (node, shortage, depth)
+        
+        # Track max time_to_recovery for each node
+        time_to_recovery_map = {}
+        for edge, info in edge_disruption_info.items():
+            target = edge[1]
+            if target not in time_to_recovery_map:
+                time_to_recovery_map[target] = info['time_to_recovery']
+            else:
+                time_to_recovery_map[target] = max(time_to_recovery_map[target], info['time_to_recovery'])
+        
         # Calculate supply shortage for each affected node
         results = {}
-        visited = set()
-        queue = deque([(node, 0.0) for node in affected_nodes])
         
         while queue:
-            current_node, accumulated_shortage = queue.popleft()
-            
-            if current_node in visited:
-                continue
-            
-            visited.add(current_node)
+            current_node, accumulated_shortage, depth = queue.popleft()
             
             # Calculate supply shortage due to edge disruptions
             total_inflow = 0
@@ -131,39 +151,73 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             # Add accumulated shortage from upstream
             total_shortage = min(1.0, shortage_pct + accumulated_shortage)
             
-            # Get node properties
-            capacity = G.nodes[current_node]['capacity']
-            buffer = buffers[current_node]
+            # Accumulate shortage for this node
+            shortage_accumulator[current_node] += total_shortage
             
-            # Calculate impact in absolute units
-            impact_units = capacity * total_shortage
-            
-            # Determine if node survives
-            remaining_impact = max(0, impact_units - buffer)
-            
-            # Label: 1 if buffer absorbed all impact, 0 if failed
-            label = 1 if remaining_impact == 0 else 0
-            
-            # Store results
-            results[current_node] = {
-                'buffer': buffer,
-                'production_impact_pct': total_shortage,
-                'production_impact_units': impact_units,
-                'remaining_impact': remaining_impact,
-                'label': label,
-                'is_disrupted': 1 if current_node in affected_nodes else 0
-            }
-            
-            # If node failed, propagate shortage downstream
-            if remaining_impact > 0:
-                downstream = list(G.successors(current_node))
+            # Process node only once all sources have contributed
+            if current_node not in processed:
+                processed.add(current_node)
                 
-                if downstream:
-                    # Calculate propagated shortage
-                    propagated_shortage = remaining_impact / capacity
+                # Get node properties
+                capacity = G.nodes[current_node]['capacity']
+                buffer = buffers[current_node]
+                
+                # PRIORITY 3: Add time dynamics
+                # Impact = shortage_rate * time_to_recovery - buffer
+                time_to_recovery = time_to_recovery_map.get(current_node, 7.0)  # Default 7 days
+                time_factor = time_to_recovery / 30.0  # Normalize to 0-1
+                
+                # Calculate impact with time dynamics
+                impact_units = capacity * shortage_accumulator[current_node] * time_factor
+                
+                # Determine if node survives
+                remaining_impact = max(0, impact_units - buffer)
+                
+                # 4-CLASS LABELS: More realistic severity modeling
+                # Calculate impact ratio (how much of the shortage remains after buffer)
+                if impact_units > 0:
+                    impact_ratio = remaining_impact / impact_units
+                else:
+                    impact_ratio = 0.0
+                
+                # Define labels based on severity:
+                # 0 = Failed (>60% impact remains)
+                # 1 = Lightly Degraded (<30% impact remains)
+                # 2 = Heavily Degraded (30-60% impact remains)
+                # 3 = Normal (0% impact - fully operational)
+                if remaining_impact == 0:
+                    label = 3  # Normal (fully operational)
+                elif impact_ratio < 0.3:
+                    label = 1  # Lightly Degraded (<30% impact)
+                elif impact_ratio < 0.6:
+                    label = 2  # Heavily Degraded (30-60% impact)
+                else:
+                    label = 0  # Failed (>60% impact)
+                
+                # Store results
+                results[current_node] = {
+                    'buffer': buffer,
+                    'production_impact_pct': shortage_accumulator[current_node],
+                    'production_impact_units': impact_units,
+                    'remaining_impact': remaining_impact,
+                    'label': label,
+                    'is_disrupted': 1 if current_node in affected_nodes else 0,
+                    'time_to_recovery': time_to_recovery
+                }
+                
+                # If node failed, propagate shortage downstream
+                if remaining_impact > 0:
+                    downstream = list(G.successors(current_node))
                     
-                    for neighbor in downstream:
-                        queue.append((neighbor, propagated_shortage * 0.8))  # 80% propagation
+                    if downstream:
+                        # Calculate propagated shortage
+                        propagated_shortage = remaining_impact / capacity
+                        
+                        for neighbor in downstream:
+                            queue.append((neighbor, propagated_shortage * 0.8, depth + 1))  # 80% propagation
+                            # Update time_to_recovery for downstream nodes
+                            if neighbor not in time_to_recovery_map:
+                                time_to_recovery_map[neighbor] = time_to_recovery + 3  # Add 3 days delay
         
         return results
     
@@ -550,6 +604,175 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
         print(f"    Hybrid: {hybrid} ({hybrid/num_scenarios*100:.1f}%)")
         
         return scenarios
+    
+    def create_pyg_data_objects(self, G, node_df, edge_df, scenarios):
+        """
+        Override parent method to add DYNAMIC edge features for edge disruptions.
+        
+        Edge features (7 total):
+        [0] lead_time (normalized) - STATIC
+        [1] cost (normalized) - STATIC
+        [2] capacity_share (weight) - STATIC
+        [3] disruption_prob (risk-based) - STATIC
+        [4] is_disrupted (0=normal, 1=disrupted) - DYNAMIC ✅
+        [5] disruption_severity (0.0-1.0) - DYNAMIC ✅
+        [6] time_to_recovery (days) - DYNAMIC ✅
+        """
+        print("\n💾 Creating PyG Data objects with DYNAMIC edge features...")
+        
+        # Prepare base features (first 6 features including x,y)
+        base_features = torch.tensor(
+            node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values,
+            dtype=torch.float
+        )
+        
+        # Create edge_index
+        edge_index = torch.tensor([
+            edge_df['source'].values,
+            edge_df['target'].values
+        ], dtype=torch.long)
+        
+        # Create BASE edge features (first 4 features - STATIC)
+        num_edges = len(edge_df)
+        base_edge_attr = torch.zeros((num_edges, 4), dtype=torch.float)
+        
+        # Feature 0: lead_time (based on edge weight, normalized)
+        if 'weight' in edge_df.columns:
+            weights = edge_df['weight'].values
+            base_edge_attr[:, 0] = torch.tensor((weights - weights.mean()) / (weights.std() + 1e-8), dtype=torch.float)
+        
+        # Feature 1: cost (based on source/target cost factors)
+        for idx, row in edge_df.iterrows():
+            source_cost = float(node_df.loc[row['source'], 'cost_factor'])
+            target_cost = float(node_df.loc[row['target'], 'cost_factor'])
+            base_edge_attr[idx, 1] = (source_cost + target_cost) / 2.0
+        
+        # Feature 2: capacity_share (weight)
+        if 'weight' in edge_df.columns:
+            base_edge_attr[:, 2] = torch.tensor(edge_df['weight'].values, dtype=torch.float)
+        else:
+            base_edge_attr[:, 2] = 1.0
+        
+        # Feature 3: disruption_prob (based on source/target risk)
+        for idx, row in edge_df.iterrows():
+            source_risk = float(node_df.loc[row['source'], 'risk_level'])
+            target_risk = float(node_df.loc[row['target'], 'risk_level'])
+            base_edge_attr[idx, 3] = (source_risk + target_risk) / 2.0
+        
+        print(f"  ✓ Created base edge features: {base_edge_attr.shape}")
+        
+        # Create edge index mapping for fast lookup
+        edge_to_idx = {}
+        for idx, row in edge_df.iterrows():
+            edge_to_idx[(row['source'], row['target'])] = idx
+        
+        num_nodes = len(node_df)
+        data_objects = []
+        
+        for scenario in tqdm(scenarios, desc="Creating Data objects"):
+            # Initialize node features
+            x = torch.zeros((num_nodes, base_features.shape[1] + 1), dtype=torch.float)
+            x[:, :base_features.shape[1]] = base_features
+            
+            # Initialize labels and mask
+            y = torch.full((num_nodes,), -1, dtype=torch.long)
+            train_mask = torch.zeros(num_nodes, dtype=torch.bool)
+            
+            # Collect buffers for this scenario to normalize
+            scenario_buffers = {}
+            for node_id, result in scenario['results'].items():
+                scenario_buffers[int(node_id)] = result['buffer']
+            
+            # Normalize buffers for this scenario (Z-score)
+            if len(scenario_buffers) > 0:
+                buffer_values = list(scenario_buffers.values())
+                buffer_mean = np.mean(buffer_values)
+                buffer_std = np.std(buffer_values)
+                if buffer_std == 0:
+                    buffer_std = 1.0
+            
+            # Fill in scenario-specific node data
+            for node_id, result in scenario['results'].items():
+                node_id = int(node_id)
+                buffer_normalized = (result['buffer'] - buffer_mean) / buffer_std
+                x[node_id, 6] = buffer_normalized
+                y[node_id] = result['label']
+                train_mask[node_id] = True
+            
+            # Create DYNAMIC edge features for this scenario
+            edge_attr = torch.zeros((num_edges, 7), dtype=torch.float)
+            edge_attr[:, :4] = base_edge_attr  # Copy static features
+            
+            # Features 4-6 are DYNAMIC - populate from scenario
+            if 'edge_capacity_reduction' in scenario:
+                edge_capacity_reduction = scenario['edge_capacity_reduction']
+                
+                for edge, reduction in edge_capacity_reduction.items():
+                    if edge in edge_to_idx:
+                        idx = edge_to_idx[edge]
+                        
+                        # Feature 4: is_disrupted
+                        edge_attr[idx, 4] = 1.0
+                        
+                        # Feature 5: disruption_severity
+                        edge_attr[idx, 5] = reduction
+                        
+                        # Feature 6: time_to_recovery (3-30 days)
+                        edge_attr[idx, 6] = np.random.uniform(3, 30) / 30.0  # Normalize to 0-1
+                        
+                        # MODIFY static features to reflect disruption
+                        # Increase lead_time by disruption factor
+                        edge_attr[idx, 0] *= (1 + reduction)
+                        
+                        # Increase cost by 50% due to disruption
+                        edge_attr[idx, 1] *= 1.5
+            
+            # Create Data object WITH dynamic edge_attr
+            data = Data(
+                x=x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,  # ✅ Dynamic edge features!
+                y=y,
+                train_mask=train_mask
+            )
+            
+            # Add metadata
+            data.scenario_id = scenario['scenario_id']
+            data.scenario_type = scenario['scenario_type']
+            data.disruption_category = scenario.get('disruption_category', 'unknown')
+            
+            # Handle initial_node
+            if 'initial_node' in scenario and scenario['initial_node'] is not None:
+                if isinstance(scenario['initial_node'], list):
+                    data.initial_nodes = torch.tensor(scenario['initial_node'], dtype=torch.long)
+                    data.initial_impacts = torch.tensor(scenario['initial_impact_pct'], dtype=torch.float)
+                    data.num_initial_disruptions = len(scenario['initial_node'])
+                else:
+                    data.initial_nodes = torch.tensor([scenario['initial_node']], dtype=torch.long)
+                    data.initial_impacts = torch.tensor([scenario['initial_impact_pct']], dtype=torch.float)
+                    data.num_initial_disruptions = 1
+            else:
+                data.initial_nodes = torch.tensor([], dtype=torch.long)
+                data.initial_impacts = torch.tensor([], dtype=torch.float)
+                data.num_initial_disruptions = 0
+            
+            # Handle disrupted_edges
+            if 'disrupted_edges' in scenario and scenario['disrupted_edges'] is not None:
+                data.disrupted_edges = scenario['disrupted_edges']
+                data.num_edge_disruptions = len(scenario['disrupted_edges'])
+            else:
+                data.disrupted_edges = []
+                data.num_edge_disruptions = 0
+            
+            data_objects.append(data)
+        
+        print(f"  ✓ Created {len(data_objects)} Data objects")
+        print(f"  ✓ Node feature dimensions: {data_objects[0].x.shape}")
+        print(f"  ✓ Edge feature dimensions: {data_objects[0].edge_attr.shape}")
+        print(f"  ✓ Edge features: [lead_time, cost, capacity_share, disruption_prob, is_disrupted, disruption_severity, time_to_recovery]")
+        print(f"  ✓ DYNAMIC edge features [4-6] change per scenario!")
+        
+        return data_objects
 
 
 def main():

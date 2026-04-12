@@ -197,8 +197,26 @@ class RealisticDisruptionSimulator:
             # Determine if node survives
             remaining_impact = max(0, impact_units - buffer)
             
-            # Label: 1 if buffer absorbed all impact, 0 if failed
-            label = 1 if remaining_impact == 0 else 0
+            # 4-CLASS LABELS: More realistic severity modeling
+            # Calculate impact ratio (how much of the shortage remains after buffer)
+            if impact_units > 0:
+                impact_ratio = remaining_impact / impact_units
+            else:
+                impact_ratio = 0.0
+            
+            # Define labels based on severity:
+            # 0 = Failed (>60% impact remains)
+            # 1 = Lightly Degraded (<30% impact remains)
+            # 2 = Heavily Degraded (30-60% impact remains)
+            # 3 = Normal (0% impact - fully operational)
+            if remaining_impact == 0:
+                label = 3  # Normal (fully operational)
+            elif impact_ratio < 0.3:
+                label = 1  # Lightly Degraded (<30% impact)
+            elif impact_ratio < 0.6:
+                label = 2  # Heavily Degraded (30-60% impact)
+            else:
+                label = 0  # Failed (>60% impact)
             
             # Store results
             results[current_node] = {
@@ -296,8 +314,26 @@ class RealisticDisruptionSimulator:
             # Determine if node survives
             remaining_impact = max(0, impact_units - buffer)
             
-            # Label: 1 if buffer absorbed all impact, 0 if failed
-            label = 1 if remaining_impact == 0 else 0
+            # 4-CLASS LABELS: More realistic severity modeling
+            # Calculate impact ratio (how much of the shortage remains after buffer)
+            if impact_units > 0:
+                impact_ratio = remaining_impact / impact_units
+            else:
+                impact_ratio = 0.0
+            
+            # Define labels based on severity:
+            # 0 = Failed (>60% impact remains)
+            # 1 = Lightly Degraded (<30% impact remains)
+            # 2 = Heavily Degraded (30-60% impact remains)
+            # 3 = Normal (0% impact - fully operational)
+            if remaining_impact == 0:
+                label = 3  # Normal (fully operational)
+            elif impact_ratio < 0.3:
+                label = 1  # Lightly Degraded (<30% impact)
+            elif impact_ratio < 0.6:
+                label = 2  # Heavily Degraded (30-60% impact)
+            else:
+                label = 0  # Failed (>60% impact)
             
             # Store results
             is_initial = 1 if current_node in initial_nodes else 0
@@ -639,6 +675,42 @@ class RealisticDisruptionSimulator:
             edge_df['target'].values
         ], dtype=torch.long)
         
+        # Create edge features (7 features per edge)
+        # [0] lead_time (normalized)
+        # [1] cost (normalized)
+        # [2] capacity_share (weight)
+        # [3] disruption_prob (risk-based)
+        # [4] is_disrupted (0=normal, 1=disrupted) - DYNAMIC
+        # [5] disruption_severity (0.0-1.0) - DYNAMIC
+        # [6] time_to_recovery (days) - DYNAMIC
+        num_edges = len(edge_df)
+        edge_attr = torch.zeros((num_edges, 7), dtype=torch.float)
+        
+        # Feature 0: lead_time (based on edge weight, normalized)
+        if 'weight' in edge_df.columns:
+            weights = edge_df['weight'].values
+            edge_attr[:, 0] = torch.tensor((weights - weights.mean()) / (weights.std() + 1e-8), dtype=torch.float)
+        
+        # Feature 1: cost (based on source/target cost factors)
+        for idx, row in edge_df.iterrows():
+            source_cost = float(node_df.loc[row['source'], 'cost_factor'])
+            target_cost = float(node_df.loc[row['target'], 'cost_factor'])
+            edge_attr[idx, 1] = (source_cost + target_cost) / 2.0
+        
+        # Feature 2: capacity_share (weight)
+        if 'weight' in edge_df.columns:
+            edge_attr[:, 2] = torch.tensor(edge_df['weight'].values, dtype=torch.float)
+        else:
+            edge_attr[:, 2] = 1.0
+        
+        # Feature 3: disruption_prob (based on source/target risk)
+        for idx, row in edge_df.iterrows():
+            source_risk = float(node_df.loc[row['source'], 'risk_level'])
+            target_risk = float(node_df.loc[row['target'], 'risk_level'])
+            edge_attr[idx, 3] = (source_risk + target_risk) / 2.0
+        
+        print(f"  ✓ Created edge features: {edge_attr.shape}")
+        
         num_nodes = len(node_df)
         data_objects = []
         
@@ -679,10 +751,11 @@ class RealisticDisruptionSimulator:
                 y[node_id] = result['label']
                 train_mask[node_id] = True
             
-            # Create Data object
+            # Create Data object WITH edge_attr
             data = Data(
                 x=x,
                 edge_index=edge_index,
+                edge_attr=edge_attr,  # ✅ Add edge features!
                 y=y,
                 train_mask=train_mask
             )

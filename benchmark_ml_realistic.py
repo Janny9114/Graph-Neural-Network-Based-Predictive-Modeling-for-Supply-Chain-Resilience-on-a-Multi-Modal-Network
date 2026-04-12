@@ -23,8 +23,16 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_scenario_data(scenario_dir='scenario_graphs_realistic'):
-    """Load all scenario graphs and convert to flat features."""
+def load_scenario_data(scenario_dir='scenario_graphs_realistic', add_edge_features=True):
+    """
+    Load all scenario graphs and convert to flat features.
+    
+    NEW: Adds edge-aware features for fair ML vs GNN comparison!
+    
+    Args:
+        scenario_dir: Directory containing scenario files
+        add_edge_features: If True, add 1-hop edge aggregations (FAIR COMPARISON)
+    """
     print("="*70)
     print("LOADING REALISTIC SCENARIO DATA FOR ML BENCHMARKING")
     print("="*70)
@@ -37,6 +45,7 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic'):
     print(f"\nMetadata:")
     print(f"  Total scenarios: {metadata['num_scenarios']}")
     print(f"  Features per node: {metadata['num_features']}")
+    print(f"  Edge-aware features: {'ENABLED ✅' if add_edge_features else 'DISABLED ❌'}")
     
     # Load all scenarios and flatten to tabular data
     print(f"\n📂 Loading and flattening {metadata['num_scenarios']} scenarios...")
@@ -52,8 +61,16 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic'):
         # Extract labeled nodes
         labeled_mask = data.train_mask
         if labeled_mask.sum() > 0:
-            features = data.x[labeled_mask].numpy()
+            node_features = data.x[labeled_mask].numpy()
             labels = data.y[labeled_mask].numpy()
+            
+            # ADD EDGE-AWARE FEATURES (1-hop aggregations)
+            if add_edge_features and hasattr(data, 'edge_attr') and data.edge_attr is not None:
+                edge_features = extract_edge_features(data, labeled_mask)
+                # Concatenate node features + edge features
+                features = np.hstack([node_features, edge_features])
+            else:
+                features = node_features
             
             all_features.append(features)
             all_labels.append(labels)
@@ -64,10 +81,82 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic'):
     scenario_ids = np.array(all_scenario_ids)
     
     print(f"\n✓ Loaded {len(X):,} labeled samples")
-    print(f"  Resilient (1): {(y == 1).sum():,} ({(y == 1).sum()/len(y)*100:.1f}%)")
-    print(f"  Vulnerable (0): {(y == 0).sum():,} ({(y == 0).sum()/len(y)*100:.1f}%)")
+    print(f"  Feature dimensions: {X.shape[1]} features per node")
+    
+    # Count classes (support both binary and multi-class)
+    unique_classes = np.unique(y)
+    print(f"  Classes found: {unique_classes}")
+    for cls in unique_classes:
+        count = (y == cls).sum()
+        pct = count / len(y) * 100
+        class_name = {0: 'Failed', 1: 'Lightly Degraded', 2: 'Heavily Degraded', 3: 'Normal'}.get(cls, f'Class {cls}')
+        print(f"    {class_name} ({cls}): {count:,} ({pct:.1f}%)")
     
     return X, y, scenario_ids, metadata
+
+
+def extract_edge_features(data, node_mask):
+    """
+    Extract 1-hop edge aggregation features for ML baseline.
+    
+    CRITICAL FOR FAIR COMPARISON:
+    - ML gets 1-hop edge info (incoming edges only)
+    - GNN gets multi-hop reasoning (full graph)
+    - This prevents "rigged fight" criticism
+    
+    Edge features extracted (4 per node):
+    1. incoming_edges_disrupted_count: How many incoming edges are disrupted
+    2. avg_incoming_capacity_reduction: Average capacity reduction of incoming edges
+    3. max_incoming_disruption_severity: Maximum disruption severity among incoming edges
+    4. weighted_avg_edge_recovery_time: Weighted average recovery time
+    
+    Returns:
+        np.array of shape (num_labeled_nodes, 4)
+    """
+    edge_index = data.edge_index.numpy()
+    edge_attr = data.edge_attr.numpy()
+    
+    # Get labeled node indices
+    labeled_nodes = torch.where(node_mask)[0].numpy()
+    
+    # Initialize edge features
+    edge_features = np.zeros((len(labeled_nodes), 4))
+    
+    for idx, node in enumerate(labeled_nodes):
+        # Find incoming edges to this node
+        incoming_mask = edge_index[1] == node
+        incoming_edges = edge_index[:, incoming_mask]
+        incoming_edge_attr = edge_attr[incoming_mask]
+        
+        if len(incoming_edge_attr) > 0:
+            # Feature 1: Count of disrupted incoming edges
+            # edge_attr[:, 4] = is_disrupted (0 or 1)
+            disrupted_count = incoming_edge_attr[:, 4].sum()
+            edge_features[idx, 0] = disrupted_count
+            
+            # Feature 2: Average capacity reduction
+            # edge_attr[:, 5] = disruption_severity (0.0-1.0)
+            # Only average over disrupted edges
+            disrupted_edges = incoming_edge_attr[incoming_edge_attr[:, 4] > 0]
+            if len(disrupted_edges) > 0:
+                avg_capacity_reduction = disrupted_edges[:, 5].mean()
+                edge_features[idx, 1] = avg_capacity_reduction
+            
+            # Feature 3: Maximum disruption severity
+            max_severity = incoming_edge_attr[:, 5].max()
+            edge_features[idx, 2] = max_severity
+            
+            # Feature 4: Weighted average recovery time
+            # edge_attr[:, 6] = time_to_recovery (normalized 0-1)
+            # Weight by disruption severity
+            if len(disrupted_edges) > 0:
+                severities = disrupted_edges[:, 5]
+                recovery_times = disrupted_edges[:, 6]
+                if severities.sum() > 0:
+                    weighted_recovery = (severities * recovery_times).sum() / severities.sum()
+                    edge_features[idx, 3] = weighted_recovery
+    
+    return edge_features
 
 
 def split_by_scenarios(X, y, scenario_ids, train_ratio=0.7, val_ratio=0.15, seed=42):
@@ -95,7 +184,12 @@ def split_by_scenarios(X, y, scenario_ids, train_ratio=0.7, val_ratio=0.15, seed
 
 
 def train_and_evaluate_model(model, model_name, X_train, y_train, X_test, y_test):
-    """Train and evaluate a single model."""
+    """
+    Train and evaluate a single model.
+    
+    NEW: Supports multi-class classification (4 classes)
+    Uses 'weighted' average for precision, recall, F1
+    """
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
     print(f"{'='*70}")
@@ -103,15 +197,19 @@ def train_and_evaluate_model(model, model_name, X_train, y_train, X_test, y_test
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     
+    # Determine if binary or multi-class
+    num_classes = len(np.unique(y_train))
+    average_method = 'binary' if num_classes == 2 else 'weighted'
+    
     accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred, zero_division=0)
-    recall = recall_score(y_test, y_pred, zero_division=0)
-    f1 = f1_score(y_test, y_pred, zero_division=0)
+    precision = precision_score(y_test, y_pred, average=average_method, zero_division=0)
+    recall = recall_score(y_test, y_pred, average=average_method, zero_division=0)
+    f1 = f1_score(y_test, y_pred, average=average_method, zero_division=0)
     
     print(f"  Accuracy:  {accuracy:.4f}")
-    print(f"  Precision: {precision:.4f}")
-    print(f"  Recall:    {recall:.4f}")
-    print(f"  F1 Score:  {f1:.4f}")
+    print(f"  Precision: {precision:.4f} ({average_method} avg)")
+    print(f"  Recall:    {recall:.4f} ({average_method} avg)")
+    print(f"  F1 Score:  {f1:.4f} ({average_method} avg)")
     
     return {'model': model_name, 'accuracy': accuracy, 'precision': precision, 'recall': recall, 'f1': f1}
 

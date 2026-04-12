@@ -500,3 +500,130 @@ Each receives: 20% * 0.8 = 16% impact (80% propagation factor)
 **Expected GNN advantage: +18-27% (5-8x larger than node-only!)**
 
 This creates a realistic, challenging dataset that demonstrates the true power of GNNs for supply chain resilience prediction! 🚀
+
+---
+
+## **🔧 RECENT IMPROVEMENTS (April 2026)**
+
+### **✅ Priority 2: Fixed BFS Accumulation in Edge Cascade**
+**Problem:** Nodes visited once couldn't accumulate disruptions from multiple sources
+
+**Solution:**
+```python
+# BEFORE: Strict visited set blocked re-entry
+if current_node in visited:
+    continue  # ❌ Skips re-processing
+
+# AFTER: Accumulator allows multiple disruptions
+shortage_accumulator = defaultdict(float)
+shortage_accumulator[current_node] += total_shortage  # ✅ Accumulates
+```
+
+**Impact:** Nodes now correctly accumulate shortages from multiple upstream disruptions
+
+---
+
+### **✅ Priority 3: Added Time Dynamics to Impact Calculation**
+**Problem:** `time_to_recovery` was generated but never used in calculations
+
+**Solution:**
+```python
+# BEFORE: Time generated but ignored
+time_to_recovery = np.random.uniform(3, 30)  # ❌ Not used
+
+# AFTER: Time affects impact magnitude
+time_factor = time_to_recovery / 30.0  # Normalize to 0-1
+impact_units = capacity * shortage * time_factor  # ✅ Time-weighted
+```
+
+**Impact:** 
+- 3-day disruption has less impact than 30-day disruption
+- More realistic modeling of disruption duration effects
+
+---
+
+### **✅ Changed Binary Labels to 4-Class Classification**
+**Problem:** Binary labels too harsh - 1 unit short = total failure
+
+**Solution:**
+```python
+# BEFORE: Binary classification
+label = 1 if remaining_impact == 0 else 0  # ❌ Too harsh
+
+# AFTER: 4-class severity levels
+impact_ratio = remaining_impact / impact_units
+
+if remaining_impact == 0:
+    label = 3  # Normal (fully operational)
+elif impact_ratio < 0.3:
+    label = 1  # Lightly Degraded (<30% impact)
+elif impact_ratio < 0.6:
+    label = 2  # Heavily Degraded (30-60% impact)
+else:
+    label = 0  # Failed (>60% impact)
+```
+
+**Impact:**
+- More realistic severity modeling
+- Model learns gradations of failure
+- Better decision support for supply chain managers
+
+**Files Updated:**
+- `generate_edge_disruption_scenarios.py` (edge cascade)
+- `generate_realistic_scenarios.py` (node cascade & multi-node cascade)
+
+---
+
+### **⚠️ PENDING: Priority 1 - Add Edge-Aware Features to ML Baseline**
+**Status:** 🔴 **CRITICAL** - Required for fair comparison
+
+**Why Critical:** Without edge features, ML has ZERO signal about edge disruptions
+
+**Required Changes to `benchmark_ml_realistic.py`:**
+```python
+# Current ML features (node-only):
+X = [capacity, cost_factor, risk_level, reliability, x, y, buffer]
+
+# Need to add 1-hop edge aggregations:
+X = [
+    capacity, cost_factor, risk_level, reliability, x, y, buffer,
+    incoming_edges_disrupted_count,      # ✅ NEW
+    avg_incoming_capacity_reduction,     # ✅ NEW
+    max_incoming_disruption_severity,    # ✅ NEW
+    weighted_avg_edge_recovery_time      # ✅ NEW
+]
+```
+
+**Expected Impact:**
+- **Before:** ML ~50-55% F1 (blind to edge disruptions)
+- **After:** ML ~60-65% F1 (sees 1-hop edge info)
+- **GNN:** 70-75% F1 (sees multi-hop patterns)
+- **Legitimate gap:** 10-15% proves GNN value
+
+---
+
+### **📋 Next Steps to Complete Implementation**
+
+1. 🔴 **Add edge-aware features to ML baseline** (`benchmark_ml_realistic.py`)
+2. 🔴 **Update training scripts for 4-class** (change `num_classes=4`)
+3. 🔴 **Re-generate dataset** (`python generate_edge_disruption_scenarios.py`)
+4. 🔴 **Train models** (`python train_multi_gnn_realistic.py --data_dir scenario_graphs_edge_disruptions`)
+5. 🔴 **Benchmark ML** (`python benchmark_ml_realistic.py --data_dir scenario_graphs_edge_disruptions`)
+
+---
+
+### **📝 Notes**
+
+**Original Task (Already Implemented):**
+> "add a x and y location of the node which is randomise in the zone name for the graph generation"
+
+**Status:** ✅ Already implemented in `graph_synthesis.py` (lines 150-180)
+- Nodes assigned random coordinates within zone bounding boxes
+- Coordinates Z-score normalized for ML compatibility
+
+**Research Validity:**
+- ✅ 4-class labels realistic (severity levels)
+- ✅ Time dynamics included (duration matters)
+- ✅ Multi-source disruptions accumulated correctly
+- ⚠️ ML baseline needs 1-hop edge features (prevents "rigged fight")
+- ✅ GNN advantage comes from multi-hop reasoning (legitimate)
