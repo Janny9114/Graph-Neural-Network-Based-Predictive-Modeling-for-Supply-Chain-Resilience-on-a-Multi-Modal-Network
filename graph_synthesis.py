@@ -301,12 +301,12 @@ def connect_tiers(
     for dn in downstream_nodes:
         if tier_connection == "supplier_to_mfg":
             # Manufacturers: 2-4 suppliers (multi-sourcing)
-            n_connections = np.random.randint(2, 5)
+            n_connections = np.random.randint(2, 7)
             n_connections = min(n_connections, len(upstream_nodes))
             
         elif tier_connection == "mfg_to_dist":
             # Distributors: 1-3 manufacturers
-            n_connections = np.random.randint(1, 4)
+            n_connections = np.random.randint(1, 6)
             n_connections = min(n_connections, len(upstream_nodes))
             
         elif tier_connection == "dist_to_retail":

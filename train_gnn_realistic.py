@@ -3,8 +3,9 @@ GNN Training for Realistic Supply Chain Resilience Prediction
 Trains a Graph Attention Network (GAT) on 10,000 realistic disruption scenarios.
 
 Key Features:
-- 7 input features with selective exposure
-- ALL nodes know buffer, ONLY disrupted node knows production_impact_pct
+- 7 input features: [capacity, cost_factor, risk_level, reliability, x, y, buffer]
+- ALL nodes know buffer and spatial coordinates
+- NO production_impact_pct or is_disrupted flags (hidden)
 - GNN must infer hidden impact from graph structure
 - Expected to significantly outperform ML models
 """
@@ -151,8 +152,8 @@ def split_scenarios(scenarios, train_ratio=0.7, val_ratio=0.15, seed=42):
     return train_scenarios, val_scenarios, test_scenarios
 
 
-def train_epoch(model, loader, optimizer, device):
-    """Train for one epoch."""
+def train_epoch(model, loader, optimizer, device, class_weights):
+    """Train for one epoch with class weights."""
     model.train()
     total_loss = 0
     total_correct = 0
@@ -165,8 +166,8 @@ def train_epoch(model, loader, optimizer, device):
         # Forward pass
         out = model(data.x, data.edge_index)
         
-        # Only compute loss on labeled nodes
-        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+        # Compute loss with class weights (weight vulnerable class 2x)
+        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask], weight=class_weights)
         
         # Backward pass
         loss.backward()
@@ -225,11 +226,12 @@ def evaluate(model, loader, device):
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
 
-def train_model(model, train_loader, val_loader, optimizer, device, num_epochs=100, patience=15):
-    """Train model with early stopping."""
+def train_model(model, train_loader, val_loader, optimizer, device, class_weights, num_epochs=100, patience=15):
+    """Train model with early stopping and class weights."""
     print("\n" + "="*70)
-    print("TRAINING GNN MODEL")
+    print("TRAINING GNN MODEL WITH CLASS WEIGHTS")
     print("="*70)
+    print(f"  Class weights: Vulnerable={class_weights[0]:.1f}, Resilient={class_weights[1]:.1f}")
     
     best_val_f1 = 0
     patience_counter = 0
@@ -237,7 +239,7 @@ def train_model(model, train_loader, val_loader, optimizer, device, num_epochs=1
     
     for epoch in range(1, num_epochs + 1):
         # Train
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device)
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, class_weights)
         
         # Validate
         val_loss, val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, device)
@@ -347,8 +349,8 @@ def main():
     print("GNN TRAINING - REALISTIC SCENARIOS")
     print("="*70)
     print("\nKey Features (HARDER VERSION):")
-    print("  ✓ 5 input features ONLY")
-    print("  ✓ ALL nodes know buffer (realistic)")
+    print("  ✓ 7 input features: [capacity, cost_factor, risk_level, reliability, x, y, buffer]")
+    print("  ✓ ALL nodes know buffer and spatial coordinates (realistic)")
     print("  ✓ NO production_impact_pct (hidden from everyone)")
     print("  ✓ NO is_disrupted flag (must infer from graph)")
     print("  ✓ GNN MUST use graph structure to infer everything")
@@ -395,8 +397,12 @@ def main():
     # Initialize optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
     
+    # Calculate class weights (weight vulnerable class 1.3x to address imbalance)
+    class_weights = torch.tensor([1.3, 1.0], dtype=torch.float).to(device)
+    print(f"\n  Class weights: Vulnerable=1.3, Resilient=1.0")
+    
     # Train model
-    history = train_model(model, train_loader, val_loader, optimizer, device, num_epochs=100, patience=15)
+    history = train_model(model, train_loader, val_loader, optimizer, device, class_weights, num_epochs=100, patience=15)
     
     # Save training history
     df_history = pd.DataFrame(history)
@@ -433,6 +439,21 @@ def main():
     print(classification_report(test_labels, test_preds, 
                                 target_names=['Vulnerable', 'Resilient'],
                                 digits=4))
+    
+    # Save GNN results for ML benchmark comparison
+    gnn_results = {
+        'model': 'GNN (GAT)',
+        'accuracy': test_acc,
+        'precision': test_prec,
+        'recall': test_rec,
+        'f1': test_f1
+    }
+    
+    import json
+    with open('gnn_results_realistic.json', 'w') as f:
+        json.dump(gnn_results, f, indent=2)
+    
+    print(f"\n✓ Saved GNN results: gnn_results_realistic.json")
     
     # Final summary
     print("\n" + "="*70)
