@@ -331,7 +331,7 @@ class GINEModel(torch.nn.Module):
 # TRAINING FUNCTIONS
 # ============================================================================
 
-def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=False):
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=True):
     """
     Load all scenario graphs from directory.
     
@@ -354,7 +354,7 @@ def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_
             # Keep features [0:6] (capacity, cost_factor, risk_level, reliability, x, y)
             # Skip feature [6] (buffer)
             data.x = data.x[:, :6]
-            print(f"  ✓ Buffer feature excluded from node features")
+            #print(f"  ✓ Buffer feature excluded from node features")
         
         scenarios.append(data)
     
@@ -575,6 +575,10 @@ def main():
         # Load best model and evaluate on test set
         model.load_state_dict(torch.load(f'best_{model_name.lower().replace(" ", "_")}_model.pt'))
         test_loss, test_acc, test_prec, test_rec, test_f1, test_preds, test_labels = evaluate(model, test_loader, device, use_edge_attr)
+        print(f"\n{model_name} Per-Class Metrics:")
+        print(classification_report(test_labels, test_preds, 
+                          target_names=['Failed', 'Degraded', 'Normal'],
+                          digits=3))
         
         print(f"\n{model_name} Test Results:")
         print(f"  Accuracy:  {test_acc:.4f}")

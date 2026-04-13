@@ -45,7 +45,7 @@ def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge
     
     print(f"\nMetadata:")
     print(f"  Total scenarios: {metadata['num_scenarios']}")
-    print(f"  Features per node: {metadata['num_features']}")
+    #print(f"  Features per node: {metadata['num_features']}")
     print(f"  Edge-aware features: {'ENABLED ✅' if add_edge_features else 'DISABLED ❌'}")
     print(f"  Buffer excluded: {'YES ✅' if exclude_buffer else 'NO ❌'}")
     

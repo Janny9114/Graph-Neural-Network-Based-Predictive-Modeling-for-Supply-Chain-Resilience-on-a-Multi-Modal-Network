@@ -433,6 +433,7 @@ def main():
     print(f"  Recall:    {test_rec:.4f}")
     print(f"  F1 Score:  {test_f1:.4f}")
     
+    print(classification_report(y_true, y_pred,target_names=['Failed', 'Degraded', 'Normal']))
     # Plot confusion matrix
     plot_confusion_matrix(test_labels, test_preds)
     
