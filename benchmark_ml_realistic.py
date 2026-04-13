@@ -23,7 +23,7 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge_features=True, exclude_buffer=True):
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge_features=True, exclude_buffer=False):
     """
     Load all scenario graphs and convert to flat features.
     

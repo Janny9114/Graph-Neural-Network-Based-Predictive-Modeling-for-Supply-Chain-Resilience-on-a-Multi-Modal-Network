@@ -331,6 +331,104 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             'results': results
         }
     
+    def simulate_multi_hop_disruption(self, G, base_buffers):
+        """
+        NEW Scenario: Multi-hop supply chain disruption.
+        Disrupts nodes at multiple tiers simultaneously to test deep cascade effects.
+        
+        Strategy:
+        - Disrupt 2-4 suppliers (tier 0)
+        - Disrupt 1-2 manufacturers (tier 1)
+        - Disrupt 5-10 critical edges connecting them
+        
+        This creates a complex, multi-level disruption that tests GNN's ability
+        to reason about deep cascades through the supply chain.
+        """
+        # Find nodes by tier
+        tier_0 = [n for n in G.nodes() if G.nodes[n]['tier'] == 0]  # Suppliers
+        tier_1 = [n for n in G.nodes() if G.nodes[n]['tier'] == 1]  # Manufacturers
+        tier_2 = [n for n in G.nodes() if G.nodes[n]['tier'] == 2]  # Distributors
+        
+        # Fallback if tiers not available
+        if len(tier_0) == 0:
+            tier_0 = list(G.nodes())[:50]
+        if len(tier_1) == 0:
+            tier_1 = list(G.nodes())[50:100]
+        if len(tier_2) == 0:
+            tier_2 = list(G.nodes())[100:150]
+        
+        # Select disrupted nodes at multiple tiers
+        num_tier_0 = np.random.randint(2, 5)  # 2-4 suppliers
+        num_tier_1 = np.random.randint(1, 3)  # 1-2 manufacturers
+        
+        disrupted_tier_0 = np.random.choice(tier_0, size=min(num_tier_0, len(tier_0)), replace=False)
+        disrupted_tier_1 = np.random.choice(tier_1, size=min(num_tier_1, len(tier_1)), replace=False)
+        
+        all_disrupted_nodes = list(disrupted_tier_0) + list(disrupted_tier_1)
+        
+        # Initial production impacts (60-95%)
+        initial_impact_pcts = [np.random.uniform(0.6, 0.95) for _ in all_disrupted_nodes]
+        
+        # Also disrupt critical edges connecting these tiers
+        disrupted_edges = []
+        edge_capacity_reduction = {}
+        
+        # Find edges connecting disrupted nodes to downstream
+        for node in all_disrupted_nodes:
+            for successor in G.successors(node):
+                edge = (node, successor)
+                if edge not in disrupted_edges:
+                    # 50% chance to also disrupt the edge
+                    if np.random.random() < 0.5:
+                        disrupted_edges.append(edge)
+                        edge_capacity_reduction[edge] = np.random.uniform(0.5, 0.8)
+        
+        # Add some random critical edges (high betweenness)
+        if len(list(G.edges())) > 0:
+            edge_betweenness = nx.edge_betweenness_centrality(G)
+            sorted_edges = sorted(edge_betweenness.items(), key=lambda x: x[1], reverse=True)
+            num_additional = np.random.randint(3, 8)  # 3-7 additional critical edges
+            
+            for edge, _ in sorted_edges[:num_additional]:
+                if edge not in disrupted_edges:
+                    disrupted_edges.append(edge)
+                    edge_capacity_reduction[edge] = np.random.uniform(0.4, 0.7)
+        
+        # Simulate node cascade first
+        node_results = self.simulate_multi_node_cascade(G, base_buffers, all_disrupted_nodes, initial_impact_pcts)
+        
+        # Then simulate edge cascade on top
+        edge_results = self.simulate_edge_cascade(G, base_buffers, disrupted_edges, edge_capacity_reduction)
+        
+        # Merge results (take worst case for each node)
+        combined_results = {}
+        all_affected_nodes = set(node_results.keys()) | set(edge_results.keys())
+        
+        for node in all_affected_nodes:
+            node_label = node_results.get(node, {}).get('label', 2)
+            edge_label = edge_results.get(node, {}).get('label', 2)
+            
+            # Take worst case (lower label = worse)
+            combined_label = min(node_label, edge_label)
+            
+            # Combine other metrics
+            combined_results[node] = {
+                'label': combined_label,
+                'is_disrupted': 1 if node in all_disrupted_nodes else 0,
+                'node_impact': node_results.get(node, {}),
+                'edge_impact': edge_results.get(node, {})
+            }
+        
+        return {
+            'scenario_type': 'multi_hop_disruption',
+            'disrupted_nodes': all_disrupted_nodes,
+            'disrupted_edges': disrupted_edges,
+            'edge_capacity_reduction': edge_capacity_reduction,
+            'initial_impact_pcts': initial_impact_pcts,
+            'num_tiers_affected': 2,
+            'results': combined_results
+        }
+    
     def simulate_major_supplier_failure(self, G, base_buffers):
         """
         Scenario 4: Major supplier failure.

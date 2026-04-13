@@ -331,7 +331,7 @@ class GINEModel(torch.nn.Module):
 # TRAINING FUNCTIONS
 # ============================================================================
 
-def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=True):
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=False):
     """
     Load all scenario graphs from directory.
     
