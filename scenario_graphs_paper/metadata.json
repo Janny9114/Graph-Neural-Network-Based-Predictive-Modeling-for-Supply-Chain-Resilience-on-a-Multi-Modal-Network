@@ -1,0 +1,13 @@
+{
+  "num_scenarios": 1000,
+  "scenario_types": [
+    "high_capacity_supplier_failure",
+    "random_supplier_failure",
+    "high_risk_manufacturer_failure",
+    "central_distributor_failure",
+    "multiple_transportation_delays"
+  ],
+  "node_features": 11,
+  "edge_features": 4,
+  "num_classes": 3
+}

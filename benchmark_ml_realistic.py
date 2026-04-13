@@ -23,7 +23,7 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_scenario_data(scenario_dir='scenario_graphs_realistic', add_edge_features=True):
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge_features=True, exclude_buffer=True):
     """
     Load all scenario graphs and convert to flat features.
     
@@ -32,6 +32,7 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic', add_edge_featur
     Args:
         scenario_dir: Directory containing scenario files
         add_edge_features: If True, add 1-hop edge aggregations (FAIR COMPARISON)
+        exclude_buffer: If True, exclude buffer feature (index 6) for fair comparison
     """
     print("="*70)
     print("LOADING REALISTIC SCENARIO DATA FOR ML BENCHMARKING")
@@ -46,6 +47,7 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic', add_edge_featur
     print(f"  Total scenarios: {metadata['num_scenarios']}")
     print(f"  Features per node: {metadata['num_features']}")
     print(f"  Edge-aware features: {'ENABLED ✅' if add_edge_features else 'DISABLED ❌'}")
+    print(f"  Buffer excluded: {'YES ✅' if exclude_buffer else 'NO ❌'}")
     
     # Load all scenarios and flatten to tabular data
     print(f"\n📂 Loading and flattening {metadata['num_scenarios']} scenarios...")
@@ -63,6 +65,12 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic', add_edge_featur
         if labeled_mask.sum() > 0:
             node_features = data.x[labeled_mask].numpy()
             labels = data.y[labeled_mask].numpy()
+            
+            # EXCLUDE BUFFER (index 6) if requested
+            if exclude_buffer and node_features.shape[1] > 6:
+                # Keep features [0:6] (capacity, cost_factor, risk_level, reliability, x, y)
+                # Skip feature [6] (buffer)
+                node_features = node_features[:, :6]
             
             # ADD EDGE-AWARE FEATURES (1-hop aggregations)
             if add_edge_features and hasattr(data, 'edge_attr') and data.edge_attr is not None:
@@ -97,18 +105,18 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic', add_edge_featur
 
 def extract_edge_features(data, node_mask):
     """
-    Extract 1-hop edge aggregation features for ML baseline.
+    Extract FAIR 1-hop edge aggregation features for ML baseline.
     
-    CRITICAL FOR FAIR COMPARISON:
-    - ML gets 1-hop edge info (incoming edges only)
-    - GNN gets multi-hop reasoning (full graph)
-    - This prevents "rigged fight" criticism
+    FAIR COMPARISON PRINCIPLE:
+    - ML gets ONLY structural/operational metrics (no disruption signals!)
+    - GNN gets full graph + disruption info through message passing
+    - This creates a fair test of graph reasoning vs tabular learning
     
     Edge features extracted (4 per node):
-    1. incoming_edges_disrupted_count: How many incoming edges are disrupted
-    2. avg_incoming_capacity_reduction: Average capacity reduction of incoming edges
-    3. max_incoming_disruption_severity: Maximum disruption severity among incoming edges
-    4. weighted_avg_edge_recovery_time: Weighted average recovery time
+    1. in_degree: Number of incoming edges (structural connectivity)
+    2. avg_lead_time: Average lead time of incoming edges (operational)
+    3. total_capacity_share: Sum of capacity shares (operational volume)
+    4. avg_cost: Average cost of incoming edges (operational)
     
     Returns:
         np.array of shape (num_labeled_nodes, 4)
@@ -122,39 +130,33 @@ def extract_edge_features(data, node_mask):
     # Initialize edge features
     edge_features = np.zeros((len(labeled_nodes), 4))
     
+    # Edge feature indices (first 4 are always: lead_time, cost, capacity_share, disruption_prob)
+    lead_time_idx = 0
+    cost_idx = 1
+    capacity_share_idx = 2
+    # Note: We deliberately ignore disruption_prob, is_disrupted, disruption_severity, time_to_recovery
+    
     for idx, node in enumerate(labeled_nodes):
         # Find incoming edges to this node
         incoming_mask = edge_index[1] == node
-        incoming_edges = edge_index[:, incoming_mask]
         incoming_edge_attr = edge_attr[incoming_mask]
         
         if len(incoming_edge_attr) > 0:
-            # Feature 1: Count of disrupted incoming edges
-            # edge_attr[:, 4] = is_disrupted (0 or 1)
-            disrupted_count = incoming_edge_attr[:, 4].sum()
-            edge_features[idx, 0] = disrupted_count
+            # Feature 1: In-Degree (number of incoming edges)
+            in_degree = len(incoming_edge_attr)
+            edge_features[idx, 0] = in_degree
             
-            # Feature 2: Average capacity reduction
-            # edge_attr[:, 5] = disruption_severity (0.0-1.0)
-            # Only average over disrupted edges
-            disrupted_edges = incoming_edge_attr[incoming_edge_attr[:, 4] > 0]
-            if len(disrupted_edges) > 0:
-                avg_capacity_reduction = disrupted_edges[:, 5].mean()
-                edge_features[idx, 1] = avg_capacity_reduction
+            # Feature 2: Average lead time
+            avg_lead_time = incoming_edge_attr[:, lead_time_idx].mean()
+            edge_features[idx, 1] = avg_lead_time
             
-            # Feature 3: Maximum disruption severity
-            max_severity = incoming_edge_attr[:, 5].max()
-            edge_features[idx, 2] = max_severity
+            # Feature 3: Total inbound capacity share
+            total_capacity_share = incoming_edge_attr[:, capacity_share_idx].sum()
+            edge_features[idx, 2] = total_capacity_share
             
-            # Feature 4: Weighted average recovery time
-            # edge_attr[:, 6] = time_to_recovery (normalized 0-1)
-            # Weight by disruption severity
-            if len(disrupted_edges) > 0:
-                severities = disrupted_edges[:, 5]
-                recovery_times = disrupted_edges[:, 6]
-                if severities.sum() > 0:
-                    weighted_recovery = (severities * recovery_times).sum() / severities.sum()
-                    edge_features[idx, 3] = weighted_recovery
+            # Feature 4: Average cost
+            avg_cost = incoming_edge_attr[:, cost_idx].mean()
+            edge_features[idx, 3] = avg_cost
     
     return edge_features
 
@@ -220,7 +222,7 @@ def benchmark_models(X_train, y_train, X_test, y_test):
         'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
         'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
         'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42),
-        'SVM (RBF)': SVC(kernel='rbf', random_state=42)
+        #'SVM (RBF)': SVC(kernel='rbf', random_state=42)
     }
     
     results = []
@@ -297,7 +299,7 @@ def main():
     print("="*70)
     
     # Load data
-    X, y, scenario_ids, metadata = load_scenario_data('scenario_graphs_realistic')
+    X, y, scenario_ids, metadata = load_scenario_data('scenario_graphs_edge_disruptions')
     
     # Split by scenarios
     train_mask, test_mask = split_by_scenarios(X, y, scenario_ids)

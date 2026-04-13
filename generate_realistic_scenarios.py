@@ -197,7 +197,7 @@ class RealisticDisruptionSimulator:
             # Determine if node survives
             remaining_impact = max(0, impact_units - buffer)
             
-            # 4-CLASS LABELS: More realistic severity modeling
+
             # Calculate impact ratio (how much of the shortage remains after buffer)
             if impact_units > 0:
                 impact_ratio = remaining_impact / impact_units
@@ -206,17 +206,15 @@ class RealisticDisruptionSimulator:
             
             # Define labels based on severity:
             # 0 = Failed (>60% impact remains)
-            # 1 = Lightly Degraded (<30% impact remains)
             # 2 = Heavily Degraded (30-60% impact remains)
             # 3 = Normal (0% impact - fully operational)
+            # NEW (3-class):
             if remaining_impact == 0:
-                label = 3  # Normal (fully operational)
-            elif impact_ratio < 0.3:
-                label = 1  # Lightly Degraded (<30% impact)
+                label = 2  # Normal
             elif impact_ratio < 0.6:
-                label = 2  # Heavily Degraded (30-60% impact)
+                label = 1  # Degraded
             else:
-                label = 0  # Failed (>60% impact)
+                label = 0  # Failed
             
             # Store results
             results[current_node] = {
@@ -327,11 +325,9 @@ class RealisticDisruptionSimulator:
             # 2 = Heavily Degraded (30-60% impact remains)
             # 3 = Normal (0% impact - fully operational)
             if remaining_impact == 0:
-                label = 3  # Normal (fully operational)
-            elif impact_ratio < 0.3:
-                label = 1  # Lightly Degraded (<30% impact)
+                label = 2  # Normal (fully operational)
             elif impact_ratio < 0.6:
-                label = 2  # Heavily Degraded (30-60% impact)
+                label = 1 # Heavily Degraded (30-60% impact)
             else:
                 label = 0  # Failed (>60% impact)
             

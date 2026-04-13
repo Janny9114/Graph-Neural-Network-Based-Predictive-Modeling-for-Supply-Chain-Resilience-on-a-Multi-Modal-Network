@@ -360,7 +360,9 @@ def main():
     print(f"\n🖥️  Device: {device}")
     
     # Load data
-    scenarios, metadata = load_scenario_data('scenario_graphs_realistic')
+    # Change this line:
+    scenarios, metadata = load_scenario_data('scenario_graphs_edge_disruptions')
+
     
     # Split data
     train_scenarios, val_scenarios, test_scenarios = split_scenarios(scenarios)

@@ -1,7 +1,7 @@
 {
   "num_scenarios": 10000,
   "num_nodes": 200,
-  "num_features": 7,
+  "num_features": 11,
   "feature_names": [
     "capacity",
     "cost_factor",

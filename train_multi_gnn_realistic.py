@@ -32,7 +32,7 @@ from tqdm import tqdm
 
 class GATModel(torch.nn.Module):
     """Graph Attention Network - NOW SUPPORTS 4-CLASS CLASSIFICATION"""
-    def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=4):
+    def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=3):
         super(GATModel, self).__init__()
         self.conv1 = GATConv(in_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
         #self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -64,8 +64,8 @@ class GATModel(torch.nn.Module):
 
 
 class GCNModel(torch.nn.Module):
-    """Graph Convolutional Network"""
-    def __init__(self, in_channels, hidden_channels=64, dropout=0.3):
+    """Graph Convolutional Network - NOW SUPPORTS 4-CLASS CLASSIFICATION"""
+    def __init__(self, in_channels, hidden_channels=64, dropout=0.3, num_classes=3):
         super(GCNModel, self).__init__()
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -73,7 +73,7 @@ class GCNModel(torch.nn.Module):
         self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
         self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
-        self.fc = torch.nn.Linear(hidden_channels, 2)
+        self.fc = torch.nn.Linear(hidden_channels, num_classes)  # ✅ Changed from 2 to num_classes
         self.dropout = dropout
     
     def forward(self, x, edge_index):
@@ -98,7 +98,7 @@ class GCNModel(torch.nn.Module):
 
 class GraphSAGEModel(torch.nn.Module):
     """GraphSAGE with mean aggregation"""
-    def __init__(self, in_channels, hidden_channels=64, dropout=0.3):
+    def __init__(self, in_channels, hidden_channels=64, dropout=0.3, num_classes=3):
         super(GraphSAGEModel, self).__init__()
         self.conv1 = SAGEConv(in_channels, hidden_channels)
         self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -106,7 +106,7 @@ class GraphSAGEModel(torch.nn.Module):
         self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv3 = SAGEConv(hidden_channels, hidden_channels)
         self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
-        self.fc = torch.nn.Linear(hidden_channels, 2)
+        self.fc = torch.nn.Linear(hidden_channels, num_classes)
         self.dropout = dropout
     
     def forward(self, x, edge_index):
@@ -131,7 +131,7 @@ class GraphSAGEModel(torch.nn.Module):
 
 class GINModel(torch.nn.Module):
     """Graph Isomorphism Network"""
-    def __init__(self, in_channels, hidden_channels=64, dropout=0.3):
+    def __init__(self, in_channels, hidden_channels=64, dropout=0.3, num_classes=3):
         super(GINModel, self).__init__()
         
         # GIN uses MLPs as update functions
@@ -159,7 +159,7 @@ class GINModel(torch.nn.Module):
         self.conv3 = GINConv(nn3)
         self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
         
-        self.fc = torch.nn.Linear(hidden_channels, 2)
+        self.fc = torch.nn.Linear(hidden_channels, num_classes)
         self.dropout = dropout
     
     def forward(self, x, edge_index):
@@ -184,12 +184,12 @@ class GINModel(torch.nn.Module):
 
 class TransformerConvModel(torch.nn.Module):
     """
-    Edge-Aware TransformerConv with Skip Connections
+    Edge-Aware TransformerConv with Skip Connections - NOW SUPPORTS 4-CLASS CLASSIFICATION
     - Uses edge features (lead_time, cost, capacity_share, disruption_prob)
     - Skip connections preserve original node features
     - 3 layers match supply chain cascade depth
     """
-    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, num_heads=4, dropout=0.3):
+    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=3):
         super(TransformerConvModel, self).__init__()
         
         # Layer 1: 1-hop neighbors
@@ -226,7 +226,7 @@ class TransformerConvModel(torch.nn.Module):
         self.ln3 = nn.LayerNorm(hidden_channels)
         
         # Final layer with skip connection
-        self.fc = nn.Linear(hidden_channels + in_channels, 2)  # ✅ Skip connection!
+        self.fc = nn.Linear(hidden_channels + in_channels, num_classes)  # ✅ Changed from 2 to num_classes
         self.dropout = dropout
     
     def forward(self, x, edge_index, edge_attr=None):
@@ -264,7 +264,7 @@ class GINEModel(torch.nn.Module):
     - Most expressive GNN + edge features
     - Skip connections preserve original node features
     """
-    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, dropout=0.3):
+    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, dropout=0.3, num_classes=3):
         super(GINEModel, self).__init__()
         
         # Layer 1
@@ -295,7 +295,7 @@ class GINEModel(torch.nn.Module):
         self.bn3 = nn.BatchNorm1d(hidden_channels)
         
         # Final layer with skip connection
-        self.fc = nn.Linear(hidden_channels + in_channels, 2)  # ✅ Skip connection!
+        self.fc = nn.Linear(hidden_channels + in_channels, num_classes)  # ✅ Skip connection!
         self.dropout = dropout
     
     def forward(self, x, edge_index, edge_attr=None):
@@ -331,8 +331,15 @@ class GINEModel(torch.nn.Module):
 # TRAINING FUNCTIONS
 # ============================================================================
 
-def load_scenario_data(scenario_dir='scenario_graphs_realistic'):
-    """Load all scenario graphs from directory."""
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=False):
+    """
+    Load all scenario graphs from directory.
+    
+    Args:
+        scenario_dir: Directory containing scenario files
+        exclude_buffer: If True, exclude buffer feature (index 6) for fair comparison
+                       Set to False for new scenarios that don't have buffer
+    """
     metadata_path = os.path.join(scenario_dir, 'metadata.json')
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
@@ -341,7 +348,17 @@ def load_scenario_data(scenario_dir='scenario_graphs_realistic'):
     for i in tqdm(range(metadata['num_scenarios']), desc="Loading scenarios"):
         scenario_path = os.path.join(scenario_dir, f'scenario_{i:05d}.pt')
         data = torch.load(scenario_path, weights_only=False)
+        
+        # EXCLUDE BUFFER (index 6) if requested AND if it exists
+        if exclude_buffer and data.x.shape[1] > 6:
+            # Keep features [0:6] (capacity, cost_factor, risk_level, reliability, x, y)
+            # Skip feature [6] (buffer)
+            data.x = data.x[:, :6]
+            print(f"  ✓ Buffer feature excluded from node features")
+        
         scenarios.append(data)
+    
+    print(f"  ✓ Node features: {scenarios[0].x.shape[1]} dimensions")
     
     return scenarios, metadata
 
@@ -425,9 +442,11 @@ def evaluate(model, loader, device, use_edge_attr=False):
     
     avg_loss = total_loss / total_samples
     accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, zero_division=0)
-    recall = recall_score(all_labels, all_preds, zero_division=0)
-    f1 = f1_score(all_labels, all_preds, zero_division=0)
+    num_classes = len(np.unique(all_labels))
+    average_method = 'binary' if num_classes == 2 else 'weighted'
+    precision = precision_score(all_labels, all_preds, average=average_method, zero_division=0)
+    recall = recall_score(all_labels, all_preds, average=average_method, zero_division=0)
+    f1 = f1_score(all_labels, all_preds, average=average_method, zero_division=0)
     
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
@@ -474,14 +493,16 @@ def main():
     
     # Load data
     print("\nLoading data...")
-    scenarios, metadata = load_scenario_data('scenario_graphs_realistic')
+    scenarios, metadata = load_scenario_data('scenario_graphs_edge_disruptions')
     train_scenarios, val_scenarios, test_scenarios = split_scenarios(scenarios)
     
     train_loader = DataLoader(train_scenarios, batch_size=32, shuffle=True)
     val_loader = DataLoader(val_scenarios, batch_size=32, shuffle=False)
     test_loader = DataLoader(test_scenarios, batch_size=32, shuffle=False)
     
-    in_channels = metadata['num_features']
+    # Use actual node feature dimensions from loaded data
+    in_channels = train_scenarios[0].x.shape[1]
+    print(f"\n  ✓ Input channels (node features): {in_channels}")
     
     # Calculate balanced class weights from training data
     print("\nCalculating balanced class weights...")
@@ -490,15 +511,32 @@ def main():
         train_labels.extend(data.y[data.train_mask].numpy())
     
     from sklearn.utils.class_weight import compute_class_weight
+    unique_classes = np.unique(train_labels)
+    num_classes = len(unique_classes)
+    
     class_weight_values = compute_class_weight(
         'balanced',
-        classes=np.unique(train_labels),
+        classes=unique_classes,
         y=train_labels
     )
     class_weights = torch.tensor(class_weight_values, dtype=torch.float).to(device)
+    
+    print(f"  ✓ Number of classes: {num_classes}")
     print(f"  ✓ Class weights: {class_weights.cpu().numpy()}")
-    print(f"    Class 0 (Failed): {class_weights[0]:.3f}")
-    print(f"    Class 1 (Resilient): {class_weights[1]:.3f}")
+    
+    # Print class names based on number of classes
+    if num_classes == 2:
+        print(f"    Class 0 (Failed): {class_weights[0]:.3f}")
+        print(f"    Class 1 (Resilient): {class_weights[1]:.3f}")
+    elif num_classes == 3:
+        print(f"    Class 0 (Failed): {class_weights[0]:.3f}")
+        print(f"    Class 1 (Degraded): {class_weights[1]:.3f}")
+        print(f"    Class 2 (Normal): {class_weights[2]:.3f}")
+    elif num_classes == 4:
+        print(f"    Class 0 (Failed): {class_weights[0]:.3f}")
+        print(f"    Class 1 (Lightly Degraded): {class_weights[1]:.3f}")
+        print(f"    Class 2 (Heavily Degraded): {class_weights[2]:.3f}")
+        print(f"    Class 3 (Normal): {class_weights[3]:.3f}")
     
     # Check if edge features are available
     has_edge_features = hasattr(train_scenarios[0], 'edge_attr') and train_scenarios[0].edge_attr is not None
@@ -508,18 +546,18 @@ def main():
     if has_edge_features:
         print(f"Edge feature dimension: {edge_dim}")
     
-    # Define models
+    # Define models with num_classes parameter
     models = {
-        'GAT': (GATModel(in_channels, hidden_channels=64, num_heads=4, dropout=0.3), False),
-        'GCN': (GCNModel(in_channels, hidden_channels=64, dropout=0.3), False),
-        'GraphSAGE': (GraphSAGEModel(in_channels, hidden_channels=64, dropout=0.3), False),
-        'GIN': (GINModel(in_channels, hidden_channels=64, dropout=0.3), False),
+        'GAT': (GATModel(in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=num_classes), False),
+        'GCN': (GCNModel(in_channels, hidden_channels=64, dropout=0.3, num_classes=num_classes), False),
+        'GraphSAGE': (GraphSAGEModel(in_channels, hidden_channels=64, dropout=0.3, num_classes=num_classes), False),
+        'GIN': (GINModel(in_channels, hidden_channels=64, dropout=0.3, num_classes=num_classes), False),
     }
     
     # Add edge-aware models if edge features are available
     if has_edge_features:
-        models['TransformerConv'] = (TransformerConvModel(in_channels, edge_dim=edge_dim, hidden_channels=64, num_heads=4, dropout=0.3), True)
-        models['GINE'] = (GINEModel(in_channels, edge_dim=edge_dim, hidden_channels=64, dropout=0.3), True)
+        models['TransformerConv'] = (TransformerConvModel(in_channels, edge_dim=edge_dim, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=num_classes), True)
+        models['GINE'] = (GINEModel(in_channels, edge_dim=edge_dim, hidden_channels=64, dropout=0.3, num_classes=num_classes), True)
         print("\n✅ Added edge-aware models: TransformerConv, GINE")
     else:
         print("\n⚠️  No edge features found. Skipping edge-aware models.")
