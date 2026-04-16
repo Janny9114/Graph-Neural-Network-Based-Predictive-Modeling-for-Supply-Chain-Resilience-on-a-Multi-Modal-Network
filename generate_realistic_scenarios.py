@@ -113,16 +113,101 @@ class RealisticDisruptionSimulator:
         
         return rho
     
-    def calculate_base_buffers(self, G):
+
+    def calculate_buffers(self):
         """
-        Calculate base buffer for each node (30-70% of capacity).
-        This represents inventory/safety stock that ALL nodes know.
+        Calculate safety stock buffer for each node using demand and lead time uncertainty.
+        Based on the formula: Safety Stock = Z * sqrt(LT * σ_D² + D² * σ_LT²)
         """
+        import math
+        
         buffers = {}
-        for node in G.nodes():
-            base_capacity = G.nodes[node]['capacity']
-            # Base buffer: 30-70% of capacity
-            buffers[node] = base_capacity * np.random.uniform(0.3, 0.7)
+        for node in self.G.nodes():
+            capacity = self.G.nodes[node]['capacity']
+            reliability = self.G.nodes[node]['reliability']
+            risk_level = self.G.nodes[node]['risk_level']
+            
+            # Derive parameters from node attributes with randomness
+            # Average demand = sum of outgoing capacity (what the node typically ships out)
+            successors = list(self.G.successors(node))
+            if successors:
+                # Sum of outgoing capacity_share (total demand from downstream)
+                outgoing_capacity = sum(
+                    self.G[node][succ].get('capacity_share', 0.5) 
+                    for succ in successors
+                )
+                avg_demand = capacity * outgoing_capacity  # Scale by node capacity
+            else:
+                # No outgoing edges (end node/customer) - use full capacity
+                avg_demand = capacity * np.random.uniform(0.5, 1.2)
+            
+            # Standard deviation of demand (10-30% of capacity, higher for less reliable nodes)
+            demand_variability = 0.1 + (0.2 * (1 - reliability))  # 10-30%
+            std_dev_demand = avg_demand * demand_variability * np.random.uniform(0.8, 1.2)
+            
+            # Average lead time (days) - from incoming edges
+            # Calculate weighted average of incoming edge lead times
+            predecessors = list(self.G.predecessors(node))
+            if predecessors:
+                # Get lead times from incoming edges
+                incoming_lead_times = []
+                incoming_weights = []
+                for pred in predecessors:
+                    edge_data = self.G[pred][node]
+                    # Read lead_time directly from edge (should be in days)
+                    lead_time = edge_data.get('lead_time', 7.0)  # Default 7 days if not specified
+                    capacity_share = edge_data.get('capacity_share', 1.0)
+                    
+                    incoming_lead_times.append(lead_time)
+                    incoming_weights.append(capacity_share)
+                
+                # Weighted average by capacity_share
+                total_weight = sum(incoming_weights)
+                if total_weight > 0:
+                    avg_lead_time = sum(lt * w for lt, w in zip(incoming_lead_times, incoming_weights)) / total_weight
+                else:
+                    avg_lead_time = np.mean(incoming_lead_times)
+            else:
+                # No incoming edges (source node) - use default
+                avg_lead_time = 7.0  # Default 7 days for source nodes
+            
+            # Add randomness (±20%)
+            avg_lead_time *= np.random.uniform(0.8, 1.2)
+            
+            # Standard deviation of lead time (20-50% of avg, higher for risky nodes)
+            lead_time_variability = 0.2 + (0.3 * risk_level)  # 20-50%
+            std_dev_lead_time = avg_lead_time * lead_time_variability * np.random.uniform(0.8, 1.2)
+            
+            # Z-score (service level) - higher reliability = higher service level
+            # 95% service level (Z=1.65) to 99.9% (Z=3.09)
+            z_score = 1.65 + (reliability * 1.44)  # 1.65-3.09 range
+            z_score *= np.random.uniform(0.9, 1.1)  # Add slight randomness
+            
+            # Calculate safety stock using the formula
+            # Safety Stock = Z * sqrt(LT * σ_D² + D² * σ_LT²)
+            demand_variance_component = avg_lead_time * (std_dev_demand ** 2)
+            lead_time_variance_component = (avg_demand ** 2) * (std_dev_lead_time ** 2)
+            total_variance = demand_variance_component + lead_time_variance_component
+            
+            safety_stock = z_score * math.sqrt(total_variance)
+            
+            # Ensure minimum buffer (at least 10% of capacity)
+            safety_stock = max(safety_stock, capacity * 0.1)
+            
+            # Cap maximum buffer (at most 80% of capacity)
+            safety_stock = min(safety_stock, capacity * 0.8)
+            
+            buffers[node] = math.ceil(safety_stock)
+        
+        self.buffers = buffers
+        
+        # Calculate statistics
+        buffer_values = list(buffers.values())
+        avg_buffer = np.mean(buffer_values)
+        min_buffer = np.min(buffer_values)
+        max_buffer = np.max(buffer_values)
+        
+        
         return buffers
     
     def select_initial_node(self, G, scenario_type='random'):
