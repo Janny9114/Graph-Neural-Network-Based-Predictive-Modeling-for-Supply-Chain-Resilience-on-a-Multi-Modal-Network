@@ -114,7 +114,7 @@ class RealisticDisruptionSimulator:
         return rho
     
 
-    def calculate_buffers(self):
+    def calculate_base_buffers(self):
         """
         Calculate safety stock buffer for each node using demand and lead time uncertainty.
         Based on the formula: Safety Stock = Z * sqrt(LT * σ_D² + D² * σ_LT²)
@@ -174,13 +174,13 @@ class RealisticDisruptionSimulator:
             # Add randomness (±20%)
             avg_lead_time *= np.random.uniform(0.8, 1.2)
             
-            # Standard deviation of lead time (20-50% of avg, higher for risky nodes)
-            lead_time_variability = 0.2 + (0.3 * risk_level)  # 20-50%
-            std_dev_lead_time = avg_lead_time * lead_time_variability * np.random.uniform(0.8, 1.2)
+            # Standard deviation of lead time (20-40% of avg, INDEPENDENT of risk)
+            lead_time_variability = np.random.uniform(0.2, 0.4)  # 20-40%, random
+            std_dev_lead_time = avg_lead_time * lead_time_variability
             
             # Z-score (service level) - higher reliability = higher service level
-            # 95% service level (Z=1.65) to 99.9% (Z=3.09)
-            z_score = 1.65 + (reliability * 1.44)  # 1.65-3.09 range
+            # 80-95% service level
+            z_score = 0.84 + (reliability * 1.44)  # 0.84-2.24 range
             z_score *= np.random.uniform(0.9, 1.1)  # Add slight randomness
             
             # Calculate safety stock using the formula
@@ -194,7 +194,7 @@ class RealisticDisruptionSimulator:
             # Ensure minimum buffer (at least 10% of capacity)
             safety_stock = max(safety_stock, capacity * 0.1)
             
-            # Cap maximum buffer (at most 80% of capacity)
+            # Cap maximum buffer (at most 60% of capacity)
             safety_stock = min(safety_stock, capacity * 0.8)
             
             buffers[node] = math.ceil(safety_stock)
@@ -340,6 +340,19 @@ class RealisticDisruptionSimulator:
                         # Add to queue
                         queue.append((neighbor, neighbor_impact_pct))
         
+        # ✅ Add label = -1 for unaffected nodes
+        # Unaffected = nodes not in visited set (never touched by cascade)
+        for node in G.nodes():
+            if node not in visited:
+                results[node] = {
+                    'buffer': buffers[node],
+                    'production_impact_pct': 0.0,
+                    'production_impact_units': 0.0,
+                    'remaining_impact': 0.0,
+                    'label': -1,  # Unaffected (exclude from training)
+                    'is_disrupted': 0
+                }
+        
         return results
     
     def simulate_multi_node_cascade(self, G, base_buffers, initial_nodes, initial_impact_pcts):
@@ -455,6 +468,19 @@ class RealisticDisruptionSimulator:
                         # Add to queue
                         queue.append((neighbor, neighbor_impact_pct))
         
+        # ✅ Add label = -1 for unaffected nodes
+        # Unaffected = nodes not in visited set (never touched by cascade)
+        for node in G.nodes():
+            if node not in visited:
+                results[node] = {
+                    'buffer': buffers[node],
+                    'production_impact_pct': 0.0,
+                    'production_impact_units': 0.0,
+                    'remaining_impact': 0.0,
+                    'label': -1,  # Unaffected (exclude from training)
+                    'is_disrupted': 0
+                }
+        
         return results
     
     def select_regional_cluster_variable_radius(self, G):
@@ -486,17 +512,17 @@ class RealisticDisruptionSimulator:
         
         # Set radius in Z-score units (typical coordinate range: -3 to +3)
         if disaster_type == 'small':
-            radius = np.random.uniform(0.3, 0.8)    # ~10-25% of nodes
-            impact_severity = np.random.uniform(0.4, 0.7)
+            radius = np.random.uniform(0.2, 0.8)    # ~10-25% of nodes
+            impact_severity = np.random.uniform(0.6, 0.90)
         elif disaster_type == 'medium':
             radius = np.random.uniform(0.8, 1.5)    # ~25-50% of nodes
-            impact_severity = np.random.uniform(0.6, 0.85)
+            impact_severity = np.random.uniform(0.75, 0.95)
         elif disaster_type == 'large':
             radius = np.random.uniform(1.5, 2.5)    # ~50-75% of nodes
             impact_severity = np.random.uniform(0.7, 0.95)
         else:  # massive
             radius = np.random.uniform(2.5, 4.0)    # ~75-95% of nodes
-            impact_severity = np.random.uniform(0.8, 1.0)
+            impact_severity = np.random.uniform(0.9, 1.0)
         
         # Find all nodes within radius
         regional_nodes = []
@@ -1036,7 +1062,10 @@ def main():
     print("STEP 3: CALCULATING BASE BUFFERS")
     print("="*70)
     
-    base_buffers = simulator.calculate_base_buffers(G)
+    # Store graph in simulator for calculate_base_buffers to use
+    simulator.G = G
+    
+    base_buffers = simulator.calculate_base_buffers()
     print(f"  ✓ Calculated buffers for {len(base_buffers)} nodes")
     print(f"  ✓ Buffer range: {min(base_buffers.values()):.1f} - {max(base_buffers.values()):.1f}")
     

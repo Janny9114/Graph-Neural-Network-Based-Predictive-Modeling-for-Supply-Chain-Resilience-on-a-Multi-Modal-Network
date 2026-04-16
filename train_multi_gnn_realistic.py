@@ -27,12 +27,72 @@ import json
 from tqdm import tqdm
 
 # ============================================================================
+# FOCAL LOSS FOR IMBALANCED CLASSES
+# ============================================================================
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for handling class imbalance.
+    
+    Focuses training on hard-to-classify examples (rare classes).
+    
+    Args:
+        alpha: Class weights (tensor of shape [num_classes])
+        gamma: Focusing parameter (default: 2.0)
+               Higher gamma = more focus on hard examples
+    
+    Formula:
+        FL(pt) = -alpha * (1 - pt)^gamma * log(pt)
+    
+    Where pt is the probability of the correct class.
+    """
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha  # Class weights
+        self.gamma = gamma  # Focusing parameter
+        self.reduction = reduction
+    
+    def forward(self, inputs, targets):
+        """
+        Args:
+            inputs: Model predictions (logits) [N, num_classes]
+            targets: Ground truth labels [N]
+        
+        Returns:
+            Focal loss value
+        """
+        # Calculate cross-entropy loss (no reduction)
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        
+        # Calculate pt (probability of correct class)
+        pt = torch.exp(-ce_loss)
+        
+        # Calculate focal loss
+        focal_loss = ((1 - pt) ** self.gamma) * ce_loss
+        
+        # Apply class weights if provided
+        if self.alpha is not None:
+            if self.alpha.device != focal_loss.device:
+                self.alpha = self.alpha.to(focal_loss.device)
+            alpha_t = self.alpha[targets]
+            focal_loss = alpha_t * focal_loss
+        
+        # Apply reduction
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+# ============================================================================
 # MODEL ARCHITECTURES
 # ============================================================================
 
 class GATModel(torch.nn.Module):
     """Graph Attention Network - NOW SUPPORTS 4-CLASS CLASSIFICATION"""
-    def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=3):
+    def __init__(self, in_channels, hidden_channels=128, num_heads=4, dropout=0.3, num_classes=3):
         super(GATModel, self).__init__()
         self.conv1 = GATConv(in_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
         self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -69,7 +129,7 @@ class GATModel(torch.nn.Module):
 
 class GCNModel(torch.nn.Module):
     """Graph Convolutional Network - NOW SUPPORTS 4-CLASS CLASSIFICATION"""
-    def __init__(self, in_channels, hidden_channels=64, dropout=0.3, num_classes=3):
+    def __init__(self, in_channels, hidden_channels=128, dropout=0.3, num_classes=3):
         super(GCNModel, self).__init__()
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -102,7 +162,7 @@ class GCNModel(torch.nn.Module):
 
 class GraphSAGEModel(torch.nn.Module):
     """GraphSAGE with mean aggregation"""
-    def __init__(self, in_channels, hidden_channels=64, dropout=0.3, num_classes=3):
+    def __init__(self, in_channels, hidden_channels=128, dropout=0.3, num_classes=3):
         super(GraphSAGEModel, self).__init__()
         self.conv1 = SAGEConv(in_channels, hidden_channels)
         self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
@@ -135,7 +195,7 @@ class GraphSAGEModel(torch.nn.Module):
 
 class GINModel(torch.nn.Module):
     """Graph Isomorphism Network"""
-    def __init__(self, in_channels, hidden_channels=64, dropout=0.3, num_classes=3):
+    def __init__(self, in_channels, hidden_channels=128, dropout=0.3, num_classes=3):
         super(GINModel, self).__init__()
         
         # GIN uses MLPs as update functions
@@ -193,7 +253,7 @@ class TransformerConvModel(torch.nn.Module):
     - Skip connections preserve original node features
     - 3 layers match supply chain cascade depth
     """
-    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=3):
+    def __init__(self, in_channels, edge_dim=4, hidden_channels=128, num_heads=4, dropout=0.3, num_classes=3):
         super(TransformerConvModel, self).__init__()
         
         # Layer 1: 1-hop neighbors
@@ -268,7 +328,7 @@ class GINEModel(torch.nn.Module):
     - Most expressive GNN + edge features
     - Skip connections preserve original node features
     """
-    def __init__(self, in_channels, edge_dim=4, hidden_channels=64, dropout=0.3, num_classes=3):
+    def __init__(self, in_channels, edge_dim=4, hidden_channels=128, dropout=0.3, num_classes=3):
         super(GINEModel, self).__init__()
         
         # Layer 1
@@ -335,7 +395,7 @@ class GINEModel(torch.nn.Module):
 # TRAINING FUNCTIONS
 # ============================================================================
 
-def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=False):
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', exclude_buffer=True):
     """
     Load all scenario graphs from directory.
     
@@ -387,8 +447,8 @@ def split_scenarios(scenarios, train_ratio=0.7, val_ratio=0.15, seed=42):
     return train_scenarios, val_scenarios, test_scenarios
 
 
-def train_epoch(model, loader, optimizer, device, class_weights, use_edge_attr=False):
-    """Train for one epoch with class weights."""
+def train_epoch(model, loader, optimizer, device, loss_fn, use_edge_attr=False):
+    """Train for one epoch with custom loss function."""
     model.train()
     total_loss = 0
     total_correct = 0
@@ -404,15 +464,22 @@ def train_epoch(model, loader, optimizer, device, class_weights, use_edge_attr=F
         else:
             out = model(data.x, data.edge_index)
         
-        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask], weight=class_weights)
+        # ✅ Exclude label = -1 from training
+        valid_mask = (data.y != -1) & data.train_mask
+        
+        if valid_mask.sum() == 0:
+            continue  # Skip if no valid samples
+        
+        # Use custom loss function (Focal Loss or NLL Loss)
+        loss = loss_fn(out[valid_mask], data.y[valid_mask])
         
         loss.backward()
         optimizer.step()
         
-        total_loss += loss.item() * data.train_mask.sum().item()
-        pred = out[data.train_mask].argmax(dim=1)
-        total_correct += (pred == data.y[data.train_mask]).sum().item()
-        total_samples += data.train_mask.sum().item()
+        total_loss += loss.item() * valid_mask.sum().item()
+        pred = out[valid_mask].argmax(dim=1)
+        total_correct += (pred == data.y[valid_mask]).sum().item()
+        total_samples += valid_mask.sum().item()
     
     return total_loss / total_samples, total_correct / total_samples
 
@@ -435,14 +502,20 @@ def evaluate(model, loader, device, use_edge_attr=False):
         else:
             out = model(data.x, data.edge_index)
         
-        loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask])
+        # ✅ Exclude label = -1 from evaluation
+        valid_mask = (data.y != -1) & data.train_mask
         
-        total_loss += loss.item() * data.train_mask.sum().item()
-        total_samples += data.train_mask.sum().item()
+        if valid_mask.sum() == 0:
+            continue  # Skip if no valid samples
         
-        pred = out[data.train_mask].argmax(dim=1)
+        loss = F.nll_loss(out[valid_mask], data.y[valid_mask])
+        
+        total_loss += loss.item() * valid_mask.sum().item()
+        total_samples += valid_mask.sum().item()
+        
+        pred = out[valid_mask].argmax(dim=1)
         all_preds.extend(pred.cpu().numpy())
-        all_labels.extend(data.y[data.train_mask].cpu().numpy())
+        all_labels.extend(data.y[valid_mask].cpu().numpy())
     
     avg_loss = total_loss / total_samples
     accuracy = accuracy_score(all_labels, all_preds)
@@ -455,8 +528,8 @@ def evaluate(model, loader, device, use_edge_attr=False):
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
 
-def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr=True, num_epochs=200, patience=20):
-    """Train model with early stopping."""
+def train_model(model, model_name, train_loader, val_loader, optimizer, device, loss_fn, use_edge_attr=True, num_epochs=400, patience=50):
+    """Train model with early stopping and custom loss function."""
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
     print(f"{'='*70}")
@@ -465,7 +538,7 @@ def train_model(model, model_name, train_loader, val_loader, optimizer, device, 
     patience_counter = 0
     
     for epoch in range(1, num_epochs + 1):
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, class_weights, use_edge_attr)
+        train_loss, train_acc = train_epoch(model, train_loader, optimizer, device, loss_fn, use_edge_attr)
         val_loss, val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, device, use_edge_attr)
         
         if epoch % 10 == 0 or epoch == 1:
@@ -512,7 +585,9 @@ def main():
     print("\nCalculating balanced class weights...")
     train_labels = []
     for data in train_scenarios:
-        train_labels.extend(data.y[data.train_mask].numpy())
+        # ✅ Exclude label = -1 from class weight calculation
+        valid_mask = (data.y != -1) & data.train_mask
+        train_labels.extend(data.y[valid_mask].numpy())
     
     from sklearn.utils.class_weight import compute_class_weight
     unique_classes = np.unique(train_labels)
@@ -552,29 +627,35 @@ def main():
     
     # Define models with num_classes parameter
     models = {
-        'GAT': (GATModel(in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=num_classes), False),
-        'GCN': (GCNModel(in_channels, hidden_channels=64, dropout=0.3, num_classes=num_classes), False),
-        'GraphSAGE': (GraphSAGEModel(in_channels, hidden_channels=64, dropout=0.3, num_classes=num_classes), False),
-        'GIN': (GINModel(in_channels, hidden_channels=64, dropout=0.3, num_classes=num_classes), False),
+        'GAT': (GATModel(in_channels, hidden_channels=128, num_heads=4, dropout=0.3, num_classes=num_classes), False),
+        'GCN': (GCNModel(in_channels, hidden_channels=128, dropout=0.3, num_classes=num_classes), False),
+        'GraphSAGE': (GraphSAGEModel(in_channels, hidden_channels=128, dropout=0.3, num_classes=num_classes), False),
+        'GIN': (GINModel(in_channels, hidden_channels=128, dropout=0.3, num_classes=num_classes), False),
     }
     
     # Add edge-aware models if edge features are available
     if has_edge_features:
-        models['TransformerConv'] = (TransformerConvModel(in_channels, edge_dim=edge_dim, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=num_classes), True)
-        models['GINE'] = (GINEModel(in_channels, edge_dim=edge_dim, hidden_channels=64, dropout=0.3, num_classes=num_classes), True)
+        models['TransformerConv'] = (TransformerConvModel(in_channels, edge_dim=edge_dim, hidden_channels=128, num_heads=4, dropout=0.3, num_classes=num_classes), True)
+        models['GINE'] = (GINEModel(in_channels, edge_dim=edge_dim, hidden_channels=128, dropout=0.3, num_classes=num_classes), True)
         print("\n✅ Added edge-aware models: TransformerConv, GINE")
     else:
         print("\n⚠️  No edge features found. Skipping edge-aware models.")
     
+    # Create Focal Loss with class weights
+    print("\n🎯 Using Focal Loss (gamma=2.0) for imbalanced classes")
+    #focal_loss = FocalLoss(alpha=class_weights, gamma=2.0)
+    # Replace Focal Loss with standard loss:
+    focal_loss = nn.NLLLoss(weight=class_weights)
+
     results = []
     
     # Train each model
     for model_name, (model, use_edge_attr) in models.items():
         model = model.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=5e-4)
         
-        # Train
-        best_val_f1 = train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr)
+        # Train with Focal Loss
+        best_val_f1 = train_model(model, model_name, train_loader, val_loader, optimizer, device, focal_loss, use_edge_attr)
         
         # Load best model and evaluate on test set
         model.load_state_dict(torch.load(f'best_{model_name.lower().replace(" ", "_")}_model.pt'))

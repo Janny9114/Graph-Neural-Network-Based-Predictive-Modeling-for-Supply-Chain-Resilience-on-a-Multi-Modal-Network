@@ -455,7 +455,7 @@ def evaluate(model, loader, device, use_edge_attr=False):
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
 
-def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr=True, num_epochs=200, patience=20):
+def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr=True, num_epochs=300, patience=50):
     """Train model with early stopping."""
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
@@ -571,7 +571,7 @@ def main():
     # Train each model
     for model_name, (model, use_edge_attr) in models.items():
         model = model.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
         
         # Train
         best_val_f1 = train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr)

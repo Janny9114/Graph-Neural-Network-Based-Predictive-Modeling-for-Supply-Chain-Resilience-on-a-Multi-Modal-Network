@@ -336,111 +336,113 @@ def generate_edge_features(
     """
     Generate edge-level features including hierarchical flow quantities.
     
+    Uses Dirichlet distribution for capacity_share to ensure realistic allocation:
+    - Capacity shares per source node sum to ≤ 1.0 (no oversubscription)
+    - Utilization target: 70-95% (leaves spare capacity)
+    
     Flow ranges by tier connection:
     - Suppliers (Tier 0) -> Manufacturers (Tier 1): 10,000 to 50,000 units
     - Manufacturers (Tier 1) -> Distributors (Tier 2): 5,000 to 20,000 units
     - Distributors (Tier 2) -> Retailers (Tier 3): 1,000 to 5,000 units
     """
+    from collections import defaultdict
+    
     edges = list(G.edges())
-    n_edges = len(edges)
-
-    lead_times = []
-    transport_costs = []
-    capacity_shares = []
-    disruption_probs = []
-    flow_quantities = []
-
+    
+    # Group edges by source node for Dirichlet allocation
+    edges_by_source = defaultdict(list)
     for u, v in edges:
-        region_u = node_df.loc[u, "region"]
-        region_v = node_df.loc[v, "region"]
-        tier_u = node_df.loc[u, "tier"]
-        tier_v = node_df.loc[v, "tier"]
+        edges_by_source[u].append((u, v))
+    
+    # Storage for all edge features
+    all_edge_data = []
+    
+    # Process each source node
+    for source_node, source_edges in edges_by_source.items():
+        num_edges = len(source_edges)
         
-        # Get coordinates for distance calculation
-        x_u, y_u = node_df.loc[u, "x"], node_df.loc[u, "y"]
-        x_v, y_v = node_df.loc[v, "x"], node_df.loc[v, "y"]
-
-        # Hierarchical flow quantities based on tier connection
-        if tier_u == 0 and tier_v == 1:
-            # Suppliers -> Manufacturers: 10,000 to 50,000 units
-            flow = np.random.uniform(10000, 50000)
-        elif tier_u == 1 and tier_v == 2:
-            # Manufacturers -> Distributors: 5,000 to 20,000 units
-            flow = np.random.uniform(5000, 20000)
-        elif tier_u == 2 and tier_v == 3:
-            # Distributors -> Retailers: 1,000 to 5,000 units
-            flow = np.random.uniform(1000, 5000)
-        else:
-            # Fallback for any other connections
-            flow = np.random.uniform(1000, 10000)
-
-        # Calculate geographic distance (Euclidean approximation)
-        # This is a rough approximation: 1 degree ≈ 111 km
-        distance = np.sqrt((x_v - x_u)**2 + (y_v - y_u)**2) * 111
+        # Generate capacity shares using Dirichlet distribution
+        # Alpha = 2.0 for all edges (creates similar distribution to Beta(2,5))
+        capacity_shares_dirichlet = np.random.dirichlet(alpha=[2.0] * num_edges)
         
-        # Lead time based on real data distribution AND geographic distance
-        # Real data: mean=17.5 days, std=10.9 days, range=2-35 days
-        if region_u == region_v:
-            # Domestic: shorter lead times (2-18 days)
-            base_lt = 10
-            lt = np.random.normal(loc=base_lt, scale=4.0)
-            lt = np.clip(lt, 2, 18)
-            cost = np.random.normal(loc=100, scale=20)
-        else:
-            # International: lead time scales with distance
-            # Short distance (e.g., China to India): 12-20 days
-            # Medium distance (e.g., China to Europe): 20-28 days  
-            # Long distance (e.g., China to US): 25-35 days
+        # Scale to realistic utilization (70-95%)
+        utilization = np.random.uniform(0.70, 0.95)
+        capacity_shares_dirichlet *= utilization
+        
+        # Generate other features for each edge from this source
+        for idx, (u, v) in enumerate(source_edges):
+            region_u = node_df.loc[u, "region"]
+            region_v = node_df.loc[v, "region"]
+            tier_u = node_df.loc[u, "tier"]
+            tier_v = node_df.loc[v, "tier"]
             
-            if distance < 3000:  # Short international (< 3000 km)
-                base_lt = 15
-                lt_std = 3.0
-                lt_min, lt_max = 12, 20
-            elif distance < 8000:  # Medium international (3000-8000 km)
-                base_lt = 22
-                lt_std = 4.0
-                lt_min, lt_max = 18, 28
-            else:  # Long international (> 8000 km)
-                base_lt = 28
-                lt_std = 4.0
-                lt_min, lt_max = 22, 35
+            # Get coordinates for distance calculation
+            x_u, y_u = node_df.loc[u, "x"], node_df.loc[u, "y"]
+            x_v, y_v = node_df.loc[v, "x"], node_df.loc[v, "y"]
+
+            # Calculate geographic distance (Euclidean approximation)
+            # This is a rough approximation: 1 degree ≈ 111 km
+            distance = np.sqrt((x_v - x_u)**2 + (y_v - y_u)**2) * 111
             
-            lt = np.random.normal(loc=base_lt, scale=lt_std)
-            lt = np.clip(lt, lt_min, lt_max)
-            
-            # Cost also scales with distance
-            cost = np.random.normal(loc=200 + distance * 0.05, scale=50)
+            # Lead time based on real data distribution AND geographic distance
+            # Real data: mean=17.5 days, std=10.9 days, range=2-35 days
+            if region_u == region_v:
+                # Domestic: shorter lead times (2-18 days)
+                base_lt = 10
+                lt = np.random.normal(loc=base_lt, scale=4.0)
+                lt = np.clip(lt, 2, 18)
+                cost = np.random.normal(loc=100, scale=20)
+            else:
+                # International: lead time scales with distance
+                # Short distance (e.g., China to India): 12-20 days
+                # Medium distance (e.g., China to Europe): 20-28 days  
+                # Long distance (e.g., China to US): 25-35 days
+                
+                if distance < 3000:  # Short international (< 3000 km)
+                    base_lt = 15
+                    lt_std = 3.0
+                    lt_min, lt_max = 12, 20
+                elif distance < 8000:  # Medium international (3000-8000 km)
+                    base_lt = 22
+                    lt_std = 4.0
+                    lt_min, lt_max = 18, 28
+                else:  # Long international (> 8000 km)
+                    base_lt = 28
+                    lt_std = 4.0
+                    lt_min, lt_max = 22, 35
+                
+                lt = np.random.normal(loc=base_lt, scale=lt_std)
+                lt = np.clip(lt, lt_min, lt_max)
+                
+                # Cost also scales with distance
+                cost = np.random.normal(loc=200 + distance * 0.05, scale=50)
 
-        lt = max(2.0, lt)  # Minimum 2 days (matches real data)
-        cost = max(20.0, cost)
+            lt = max(2.0, lt)  # Minimum 2 days (matches real data)
+            cost = max(20.0, cost)
 
-        # Capacity share: fraction of upstream node's capacity sent to this downstream
-        share = np.clip(np.random.beta(a=2, b=5), 0.01, 0.7)
+            # Use capacity_share from Dirichlet distribution
+            share = capacity_shares_dirichlet[idx]
 
-        # Disruption probability: combine node risks + random noise
-        risk_u = node_df.loc[u, "risk_level"]
-        risk_v = node_df.loc[v, "risk_level"]
-        d_prob = np.clip(
-            0.5 * risk_u + 0.3 * risk_v + np.random.normal(0, 0.05),
-            0.01, 0.95
-        )
+            # Disruption probability: combine node risks + random noise
+            risk_u = node_df.loc[u, "risk_level"]
+            risk_v = node_df.loc[v, "risk_level"]
+            d_prob = np.clip(
+                0.5 * risk_u + 0.3 * risk_v + np.random.normal(0, 0.05),
+                0.01, 0.95
+            )
 
-        lead_times.append(lt)
-        transport_costs.append(cost)
-        capacity_shares.append(share)
-        disruption_probs.append(d_prob)
-        flow_quantities.append(flow)
-
-    edge_df = pd.DataFrame({
-        "source": [u for u, v in edges],
-        "target": [v for u, v in edges],
-        "lead_time": lead_times,
-        "transport_cost": transport_costs,
-        "capacity_share": capacity_shares,
-        "disruption_probability": disruption_probs,
-        "flow_quantity": flow_quantities
-    })
-
+            # Store edge data
+            all_edge_data.append({
+                'source': u,
+                'target': v,
+                'lead_time': lt,
+                'transport_cost': cost,
+                'capacity_share': share,
+                'disruption_probability': d_prob
+            })
+    
+    # Create DataFrame from all collected edge data
+    edge_df = pd.DataFrame(all_edge_data)
     return edge_df
 
 

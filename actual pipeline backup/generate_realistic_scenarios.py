@@ -122,7 +122,7 @@ class RealisticDisruptionSimulator:
         for node in G.nodes():
             base_capacity = G.nodes[node]['capacity']
             # Base buffer: 30-70% of capacity
-            buffers[node] = base_capacity * np.random.uniform(0.3, 0.7)
+            buffers[node] = base_capacity * np.random.uniform(0.15, 0.25)
         return buffers
     
     def select_initial_node(self, G, scenario_type='random'):

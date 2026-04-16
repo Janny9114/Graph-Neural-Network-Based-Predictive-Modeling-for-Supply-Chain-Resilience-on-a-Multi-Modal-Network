@@ -212,6 +212,20 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                             if neighbor not in time_to_recovery_map:
                                 time_to_recovery_map[neighbor] = time_to_recovery + 3  # Add 3 days delay
         
+        # ✅ Add label = -1 for unaffected nodes
+        # Unaffected = nodes not in processed set (never touched by cascade)
+        for node in G.nodes():
+            if node not in processed:
+                results[node] = {
+                    'buffer': buffers[node],
+                    'production_impact_pct': 0.0,
+                    'production_impact_units': 0.0,
+                    'remaining_impact': 0.0,
+                    'label': -1,  # Unaffected (exclude from training)
+                    'is_disrupted': 0,
+                    'time_to_recovery': 0.0
+                }
+        
         return results
     
     def simulate_transportation_route_disruption(self, G, base_buffers):
@@ -934,12 +948,15 @@ def main():
     
     G = simulator.load_graph(node_df, edge_df)
     
+    # Store graph in simulator for calculate_base_buffers to use
+    simulator.G = G
+    
     # Calculate base buffers
     print("\n" + "="*70)
     print("STEP 3: CALCULATING BASE BUFFERS")
     print("="*70)
     
-    base_buffers = simulator.calculate_base_buffers(G)
+    base_buffers = simulator.calculate_base_buffers()
     print(f"  ✓ Calculated buffers for {len(base_buffers)} nodes")
     
     # Generate scenarios with edge disruptions

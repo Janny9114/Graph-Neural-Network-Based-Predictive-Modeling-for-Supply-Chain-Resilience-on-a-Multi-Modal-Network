@@ -23,7 +23,7 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge_features=True, exclude_buffer=False):
+def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge_features=True, exclude_buffer=True):
     """
     Load all scenario graphs and convert to flat features.
     
@@ -60,8 +60,9 @@ def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge
         scenario_path = os.path.join(scenario_dir, f'scenario_{i:05d}.pt')
         data = torch.load(scenario_path, weights_only=False)
         
-        # Extract labeled nodes
-        labeled_mask = data.train_mask
+        # ✅ Exclude label = -1 from ML training
+        labeled_mask = data.train_mask & (data.y != -1)
+        
         if labeled_mask.sum() > 0:
             node_features = data.x[labeled_mask].numpy()
             labels = data.y[labeled_mask].numpy()
