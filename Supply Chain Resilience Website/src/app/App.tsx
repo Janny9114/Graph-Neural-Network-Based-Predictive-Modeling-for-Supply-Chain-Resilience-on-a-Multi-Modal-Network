@@ -220,7 +220,7 @@ export default function App() {
 
           {/* Scenarios Tab */}
           <TabsContent value="scenarios" className="space-y-6">
-            {/* GNN-Based Disruption Simulation - Main Feature */}
+            {/* GNN-Based Disruption Simulation - Main Feature with Real Predictions */}
             <div className="grid gap-6 md:grid-cols-4">
               <WhatIfSimulation />
             </div>

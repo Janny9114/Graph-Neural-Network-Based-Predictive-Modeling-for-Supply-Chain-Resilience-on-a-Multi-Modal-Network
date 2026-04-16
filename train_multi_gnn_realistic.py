@@ -35,29 +35,33 @@ class GATModel(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels=64, num_heads=4, dropout=0.3, num_classes=3):
         super(GATModel, self).__init__()
         self.conv1 = GATConv(in_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
-        #self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
+        self.bn1 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv2 = GATConv(hidden_channels, hidden_channels // num_heads, heads=num_heads, dropout=dropout)
-        #self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
+        self.bn2 = torch.nn.BatchNorm1d(hidden_channels)
         self.conv3 = GATConv(hidden_channels, hidden_channels, heads=1, dropout=dropout)
-        #self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
-        self.fc = torch.nn.Linear(hidden_channels, num_classes)  # ✅ Changed from 2 to num_classes
+        self.bn3 = torch.nn.BatchNorm1d(hidden_channels)
+        self.fc = torch.nn.Linear(hidden_channels + in_channels, num_classes)  # ✅ Fixed: skip connection
         self.dropout = dropout
     
     def forward(self, x, edge_index):
+        x_original = x  # ✅ Save for skip connection
         x = self.conv1(x, edge_index)
-        #x = self.bn1(x)
+        x = self.bn1(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
         x = self.conv2(x, edge_index)
-        #x = self.bn2(x)
+        x = self.bn2(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
         
         x = self.conv3(x, edge_index)
-        #x = self.bn3(x)
+        x = self.bn3(x)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
+        
+        # Skip connection: concatenate with original features
+        x = torch.cat([x, x_original], dim=1)  # [batch, 64 + 11] = [batch, 75]
         
         x = self.fc(x)
         return F.log_softmax(x, dim=1)
@@ -451,7 +455,7 @@ def evaluate(model, loader, device, use_edge_attr=False):
     return avg_loss, accuracy, precision, recall, f1, all_preds, all_labels
 
 
-def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr=False, num_epochs=200, patience=20):
+def train_model(model, model_name, train_loader, val_loader, optimizer, device, class_weights, use_edge_attr=True, num_epochs=200, patience=20):
     """Train model with early stopping."""
     print(f"\n{'='*70}")
     print(f"Training {model_name}")

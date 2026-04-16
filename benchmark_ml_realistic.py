@@ -222,7 +222,7 @@ def benchmark_models(X_train, y_train, X_test, y_test):
         'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
         'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
         'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42),
-        #'SVM (RBF)': SVC(kernel='rbf', random_state=42)
+        'SVM (RBF)': SVC(kernel='rbf', random_state=42)
     }
     
     results = []
