@@ -1,4 +1,0 @@
-model,best_epoch,test_accuracy,test_precision,test_recall,test_f1
-Logistic Regression,-,0.9666666666666667,0.95,1.0,0.9743589743589743
-Random Forest,-,0.9666666666666667,0.95,1.0,0.9743589743589743
-GNN (ADVANCED: 1000+4L+128H),18,0.7,0.6785714285714286,1.0,0.8085106382978723
