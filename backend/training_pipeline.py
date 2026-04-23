@@ -19,12 +19,14 @@ import sys
 
 # Add parent directory to path
 sys.path.append('C:/Users/janny/Desktop/final_year')
-from train_multi_gnn_realistic import GINEModel
+# Import from complete_training_pipeline instead
+from complete_training_pipeline import CompletePipeline
 
 
 class CustomGraphTrainer:
     """
     Trains a custom GNN model on company-specific supply chain data.
+    Uses CompletePipeline from complete_training_pipeline.py
     """
     
     def __init__(self, company_dir, progress_callback=None):
@@ -36,6 +38,9 @@ class CustomGraphTrainer:
         self.company_dir = company_dir
         self.progress_callback = progress_callback
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Initialize CompletePipeline
+        self.pipeline = CompletePipeline(seed=42, output_dir=company_dir)
         
     def update_progress(self, progress, message, stage=''):
         """Update progress if callback is provided."""
@@ -561,35 +566,57 @@ class CustomGraphTrainer:
         
         return self.train_data, self.val_data, self.test_data
     
-    def run_full_pipeline(self, num_scenarios=10000, epochs=100, use_existing_scenarios=False, scenario_dir='scenario_graphs_edge_disruptions'):
-        """Run the complete training pipeline."""
+    def run_full_pipeline(self, num_scenarios=1000, epochs=100, use_existing_scenarios=False, scenario_dir='scenario_graphs_edge_disruptions'):
+        """Run the complete training pipeline using CompletePipeline."""
         try:
-            # Step 1: Load data
-            self.load_data()
+            self.update_progress(5, "Starting complete training pipeline...", "starting")
             
-            # Step 2: Build graph
-            self.build_graph()
+            # Get paths to uploaded CSV files
+            nodes_path = os.path.join(self.company_dir, 'nodes.csv')
+            edges_path = os.path.join(self.company_dir, 'edges.csv')
             
-            if use_existing_scenarios:
-                # Use pre-generated edge disruption scenarios
-                self.update_progress(20, "Using pre-generated edge disruption scenarios", "existing")
-                self.load_existing_scenarios(scenario_dir)
+            self.update_progress(10, "Running CompletePipeline...", "pipeline")
+            
+            # Use CompletePipeline.run() with uploaded CSV files
+            results = self.pipeline.run(
+                node_path=nodes_path,
+                edge_path=edges_path,
+                num_scenarios=num_scenarios,
+                scenario_type='node'  # Use node disruption scenarios
+            )
+            
+            self.update_progress(95, "Pipeline complete, saving results...", "saving")
+            
+            # Get best model path from pipeline output
+            model_path = os.path.join(self.company_dir, 'best_gine_model.pt')
+            
+            # Extract validation accuracy from results
+            gnn_results = [r for r in results.to_dict('records') if 'GNN' in str(r.get('model', ''))]
+            if gnn_results:
+                best_result = max(gnn_results, key=lambda x: x.get('f1', 0))
+                val_acc = best_result.get('accuracy', 0)
             else:
-                # Generate new scenarios
-                # Step 3: Calculate buffers
-                self.calculate_buffers()
-                
-                # Step 4: Generate scenarios
-                self.generate_scenarios(num_scenarios)
-                
-                # Step 5: Create PyG datasets
-                self.create_pyg_datasets()
+                val_acc = 0
             
-            # Step 6: Train model
-            model_path, val_acc = self.train_model(epochs)
+            # Save metadata
+            metadata = {
+                'company_dir': self.company_dir,
+                'num_scenarios': num_scenarios,
+                'num_nodes': len(pd.read_csv(nodes_path)),
+                'num_edges': len(pd.read_csv(edges_path)),
+                'model_path': model_path,
+                'validation_accuracy': float(val_acc),
+                'trained_at': datetime.now().isoformat(),
+                'device': str(self.device),
+                'status': 'completed',
+                'results': results.to_dict('records')
+            }
             
-            # Step 7: Save metadata
-            metadata = self.save_metadata(model_path, val_acc)
+            metadata_path = os.path.join(self.company_dir, 'training_metadata.json')
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            self.update_progress(100, "Training pipeline complete!", "done")
             
             return {
                 'status': 'success',

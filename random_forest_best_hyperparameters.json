@@ -1,0 +1,8 @@
+{
+  "n_estimators": 50,
+  "max_depth": 12,
+  "min_samples_split": 18,
+  "min_samples_leaf": 5,
+  "max_features": "sqrt",
+  "cv_f1_score": 0.6956797378848695
+}

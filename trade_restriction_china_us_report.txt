@@ -1,0 +1,60 @@
+
+======================================================================
+CHINA-US TRADE RESTRICTION SCENARIO: DETAILED ANALYSIS REPORT
+======================================================================
+
+1. SCENARIO CONFIGURATION
+   - Trade Restriction Severity: 80.0%
+   - Affected Regions: China and United States
+   - China Nodes: 82
+   - US Nodes: 20
+   - Disrupted Trade Routes: 39
+
+2. BASELINE (NO RESTRICTIONS)
+   - Failed Nodes:   0 (0.0%)
+   - Degraded Nodes: 0 (0.0%)
+   - Normal Nodes:   200 (100.0%)
+
+3. TRADE RESTRICTION SCENARIO
+   - Failed Nodes:   0 (0.0%)
+   - Degraded Nodes: 0 (0.0%)
+   - Normal Nodes:   200 (100.0%)
+
+4. IMPACT ANALYSIS
+   - Change in Failed Nodes:   +0 (+0.0%)
+   - Change in Degraded Nodes: +0 (+0.0%)
+   - Change in Normal Nodes:   +0 (+0.0%)
+   - Total Nodes Worsened: 0 (0.0%)
+
+5. TOP 10 MOST AFFECTED NODES
+
+6. REGIONAL IMPACT SUMMARY
+   - China 1: Avg change = 0.00 (35 nodes)
+   - China 2: Avg change = 0.00 (20 nodes)
+   - England: Avg change = 0.00 (16 nodes)
+   - India: Avg change = 0.00 (44 nodes)
+   - Kenya: Avg change = 0.00 (14 nodes)
+   - Mexico: Avg change = 0.00 (11 nodes)
+   - Netherlands: Avg change = 0.00 (13 nodes)
+   - Norway: Avg change = 0.00 (26 nodes)
+   - United States 1: Avg change = 0.00 (21 nodes)
+
+7. KEY FINDINGS
+   - The trade restriction between China and US caused 0 nodes to degrade
+   - 0 additional nodes failed completely
+   - 0 nodes moved to degraded status
+   - The cascading effect impacted 0.0% of the network
+   - Most affected regions: China 1, China 2, England
+
+8. RECOMMENDATIONS
+   - Diversify supply sources away from China-US dependencies
+   - Strengthen regional supply chains to reduce cross-border reliance
+   - Build buffer inventory for critical components
+   - Develop alternative trade routes through other regions
+   - Invest in domestic manufacturing capabilities
+
+======================================================================
+Report generated: 2026-04-19 23:02:16.383190
+Model: GINE (Graph Isomorphism Network with Edges)
+Accuracy: 76.6%
+======================================================================

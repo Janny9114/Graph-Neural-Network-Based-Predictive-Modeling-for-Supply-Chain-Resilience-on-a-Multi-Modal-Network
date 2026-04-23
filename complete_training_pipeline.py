@@ -39,9 +39,12 @@ from actual_pipeline_backup.generate_edge_disruption_scenarios import EdgeDisrup
 from actual_pipeline_backup.train_multi_gnn_realistic import (
     GATModel, GCNModel, GraphSAGEModel, GINModel, 
     TransformerConvModel, GINEModel,
-    train_epoch, evaluate, load_scenario_data, split_scenarios
+    train_epoch, evaluate, load_scenario_data, split_scenarios, train_model
 )
-from actual_pipeline_backup.graph_construction import SupplyChainGraphBuilder
+from actual_pipeline_backup.graph_construction import create_gnn_graph
+from actual_pipeline_backup.benchmark_ml_realistic import (
+    train_and_evaluate_model, benchmark_models
+)
 
 
 class CompletePipeline:
@@ -70,25 +73,22 @@ class CompletePipeline:
     # ========================================================================
     
     def build_or_load_graph(self, graph_path='actual_pipeline_backup/supply_chain_graph.pt', 
-                           num_nodes=500, num_tiers=4):
+                           node_path='actual_pipeline_backup/synthetic_nodes.csv',
+                           edge_path='actual_pipeline_backup/synthetic_edges.csv'):
         """Build graph from scratch or load existing one."""
         
         if self.build_from_scratch:
-            self.log("Building graph from scratch...")
+            self.log("Building graph from scratch using create_gnn_graph...")
             
-            # Use SupplyChainGraphBuilder from backup
-            builder = SupplyChainGraphBuilder(
-                num_nodes=num_nodes,
-                num_tiers=num_tiers,
-                seed=self.seed
+            # Use create_gnn_graph from backup
+            graph_data = create_gnn_graph(
+                node_path=node_path,
+                edge_path=edge_path
             )
-            
-            # Generate graph
-            builder.generate_graph()
             
             # Save to output directory
             graph_path = os.path.join(self.output_dir, 'supply_chain_graph.pt')
-            builder.save_graph(graph_path)
+            torch.save(graph_data, graph_path)
             
             self.log(f"Graph built and saved to {graph_path}")
         else:
@@ -101,15 +101,11 @@ class CompletePipeline:
     # ========================================================================
     
     def generate_scenarios(self, graph_path, num_scenarios=1000, scenario_type='node'):
-        """Generate disruption scenarios using RealisticDisruptionSimulator."""
+        """Generate disruption scenarios using EdgeDisruptionSimulator."""
         self.log(f"Generating {num_scenarios} {scenario_type} disruption scenarios...")
         
-        if scenario_type == 'edge':
-            # Use EdgeDisruptionSimulator
-            simulator = EdgeDisruptionSimulator(seed=self.seed)
-        else:
-            # Use RealisticDisruptionSimulator
-            simulator = RealisticDisruptionSimulator(seed=self.seed)
+        # Always use EdgeDisruptionSimulator as requested
+        simulator = EdgeDisruptionSimulator(seed=self.seed)
         
         # Load preprocessed graph
         from actual_pipeline_backup.generate_realistic_scenarios import load_preprocessed_graph
@@ -118,11 +114,8 @@ class CompletePipeline:
         # Load graph
         G = simulator.load_graph(node_df, edge_df)
         
-        # Store graph in simulator
-        simulator.G = G
-        
-        # Calculate base buffers
-        base_buffers = simulator.calculate_base_buffers()
+        # Calculate base buffers (EdgeDisruptionSimulator method signature)
+        base_buffers = simulator.calculate_base_buffers(G)
         
         # Generate scenarios
         scenarios = simulator.generate_scenarios(G, base_buffers, num_scenarios=num_scenarios)
@@ -194,7 +187,7 @@ class CompletePipeline:
     # ========================================================================
     
     def train_gnn_models(self, train_scenarios, val_scenarios, test_scenarios):
-        """Train multiple GNN architectures using imported models."""
+        """Train multiple GNN architectures using imported train_model function."""
         self.log("Training GNN models...")
         
         train_loader = DataLoader(train_scenarios, batch_size=32, shuffle=True)
@@ -223,38 +216,22 @@ class CompletePipeline:
             self.log("Added edge-aware models: TransformerConv, GINE")
         
         results = []
-        loss_fn = nn.NLLLoss(weight=class_weights)
         
         for model_name, (model, use_edge_attr) in models.items():
             self.log(f"Training {model_name}...")
             
             model = model.to(self.device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=5e-4)
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
             
-            best_val_f1 = 0
-            patience_counter = 0
-            patience = 30
-            
-            for epoch in range(1, 201):
-                # Use imported train_epoch function
-                train_loss, train_acc = train_epoch(model, train_loader, optimizer, self.device, loss_fn, use_edge_attr)
-                
-                # Validation every 10 epochs
-                if epoch % 10 == 0:
-                    # Use imported evaluate function
-                    val_loss, val_acc, val_prec, val_rec, val_f1, _, _ = evaluate(model, val_loader, self.device, use_edge_attr)
-                    
-                    if val_f1 > best_val_f1:
-                        best_val_f1 = val_f1
-                        patience_counter = 0
-                        torch.save(model.state_dict(), os.path.join(self.output_dir, f'best_{model_name.lower()}_model.pt'))
-                    else:
-                        patience_counter += 1
-                        if patience_counter >= patience:
-                            break
+            # Use imported train_model function
+            best_val_f1 = train_model(
+                model, model_name, train_loader, val_loader, optimizer, 
+                self.device, class_weights, use_edge_attr=use_edge_attr, 
+                num_epochs=300, patience=50
+            )
             
             # Test evaluation
-            model.load_state_dict(torch.load(os.path.join(self.output_dir, f'best_{model_name.lower()}_model.pt')))
+            model.load_state_dict(torch.load(f'best_{model_name.lower().replace(" ", "_")}_model.pt'))
             test_loss, test_acc, test_prec, test_rec, test_f1, test_preds, test_labels = evaluate(model, test_loader, self.device, use_edge_attr)
             
             self.log(f"{model_name} - Test Accuracy: {test_acc:.4f}, F1: {test_f1:.4f}")
@@ -274,7 +251,7 @@ class CompletePipeline:
     # ========================================================================
     
     def benchmark_ml_models(self, train_scenarios, test_scenarios):
-        """Benchmark traditional ML models."""
+        """Benchmark traditional ML models using imported benchmark_models function."""
         self.log("Benchmarking ML models...")
         
         # Prepare flat features
@@ -300,30 +277,8 @@ class CompletePipeline:
         X_test = np.vstack(X_test)
         y_test = np.concatenate(y_test)
         
-        # Train ML models
-        ml_models = {
-            'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
-            'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42),
-        }
-        
-        results = []
-        
-        for model_name, model in ml_models.items():
-            self.log(f"Training {model_name}...")
-            
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            
-            test_acc = accuracy_score(y_test, y_pred)
-            test_f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
-            
-            self.log(f"{model_name} - Test Accuracy: {test_acc:.4f}, F1: {test_f1:.4f}")
-            
-            results.append({
-                'model': model_name,
-                'accuracy': test_acc,
-                'f1': test_f1
-            })
+        # Use imported benchmark_models function
+        results = benchmark_models(X_train, y_train, X_test, y_test)
         
         return results
     
@@ -361,15 +316,25 @@ class CompletePipeline:
     # MAIN PIPELINE
     # ========================================================================
     
-    def run(self, graph_path='actual_pipeline_backup/supply_chain_graph.pt', 
-            num_scenarios=1000, scenario_type='node', num_nodes=500, num_tiers=4):
-        """Run complete pipeline."""
+    def run(self, node_path='actual_pipeline_backup/synthetic_nodes.csv',
+            edge_path='actual_pipeline_backup/synthetic_edges.csv',
+            num_scenarios=1000, scenario_type='node'):
+        """Run complete pipeline starting from CSV files."""
         self.log("="*70)
         self.log("COMPLETE TRAINING PIPELINE")
         self.log("="*70)
         
-        # Step 1: Build or load graph
-        graph_path = self.build_or_load_graph(graph_path, num_nodes, num_tiers)
+        # Step 1: Build graph from CSV files
+        self.log("Step 1: Building graph from CSV files...")
+        # Use use_preprocessing=False to avoid flow_quantity requirement
+        graph_data = create_gnn_graph(
+            node_path=node_path, 
+            edge_path=edge_path,
+            use_preprocessing=False  # Disable preprocessing to avoid flow_quantity error
+        )
+        graph_path = os.path.join(self.output_dir, 'supply_chain_graph.pt')
+        torch.save(graph_data, graph_path)
+        self.log(f"Graph saved to {graph_path}")
         
         # Step 2: Generate scenarios
         data_objects, scenario_dir = self.generate_scenarios(graph_path, num_scenarios, scenario_type)
@@ -399,9 +364,10 @@ class CompletePipeline:
 
 def main():
     """Main execution."""
-    pipeline = CompletePipeline(seed=42, output_dir='pipeline_output', build_from_scratch=False)
+    pipeline = CompletePipeline(seed=42, output_dir='pipeline_output')
     results = pipeline.run(
-        graph_path='actual_pipeline_backup/supply_chain_graph.pt',
+        node_path='actual_pipeline_backup/synthetic_nodes.csv',
+        edge_path='actual_pipeline_backup/synthetic_edges.csv',
         num_scenarios=1000,
         scenario_type='node'  # or 'edge' for edge disruptions
     )

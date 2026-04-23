@@ -29,6 +29,7 @@ export function WhatIfSimulation() {
   const [disruptedNodeIds, setDisruptedNodeIds] = useState("0");
   const [selectedDisruption, setSelectedDisruption] = useState("port-congestion");
   const [severity, setSeverity] = useState([70]);
+  const [bufferCapacity, setBufferCapacity] = useState([50]);
   const [simulated, setSimulated] = useState(false);
   const [historicalData, setHistoricalData] = useState<DisruptionData[]>([]);
   const [allNodes, setAllNodes] = useState<any[]>([]);
@@ -37,8 +38,24 @@ export function WhatIfSimulation() {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [predictionSummary, setPredictionSummary] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Trade restriction specific states
+  const [tradeCountry1, setTradeCountry1] = useState("China 1");
+  const [tradeCountry2, setTradeCountry2] = useState("United States 1");
+  const [tariffRate, setTariffRate] = useState([45]); // 20-70% range, default 45%
+  
+  // Random supplier failure states
+  const [numSuppliers, setNumSuppliers] = useState([5]); // 1-10 range, default 5
+  const [supplierSeverity, setSupplierSeverity] = useState([60]); // 10-100% range, default 60%
+  
+  // Transportation route disruption states
+  const [numRoutes, setNumRoutes] = useState([5]); // 1-15 range, default 5
+  const [routeSeverityType, setRouteSeverityType] = useState("moderate"); // minor, moderate, severe
 
   const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+
+  // Extract unique countries from loaded nodes
+  const [availableCountries, setAvailableCountries] = useState<string[]>([]);
 
   useEffect(() => {
     // Load ALL nodes from synthetic_nodes.csv
@@ -62,6 +79,18 @@ export function WhatIfSimulation() {
         
         setAllNodes(loadedNodes);
         
+        // Extract unique countries from nodes
+        const uniqueCountries = Array.from(new Set(loadedNodes.map((node: any) => node.region as string)))
+          .filter((region): region is string => typeof region === 'string' && region.trim() !== '')
+          .sort();
+        setAvailableCountries(uniqueCountries);
+        
+        // Set default countries if available
+        if (uniqueCountries.length >= 2) {
+          setTradeCountry1(uniqueCountries[0] as string);
+          setTradeCountry2(uniqueCountries[1] as string);
+        }
+        
         // Load historical disruption data
         Papa.parse('/external_disruption_data/global_supply_chain_disruption_v1.csv', {
           download: true,
@@ -77,35 +106,85 @@ export function WhatIfSimulation() {
   }, []);
 
   const disruptionTypes = [
+    // Node-Only Disruptions (5 types)
     { 
-      value: "port-congestion", 
-      label: "Port Congestion",
+      value: "regional_failure_variable", 
+      label: "Regional Failure (Variable Radius)",
       icon: AlertTriangle,
-      description: "Delays at major shipping ports affecting cargo movement"
+      description: "Geographic region disruption affecting multiple nodes",
+      category: "Node-Only"
     },
     { 
-      value: "geopolitical-conflict", 
-      label: "Geopolitical Conflict",
-      icon: TrendingDown,
-      description: "Route diversions due to political instability or conflicts"
-    },
-    { 
-      value: "severe-weather", 
-      label: "Severe Weather (Typhoon/Storm)",
-      icon: Clock,
-      description: "Natural disasters disrupting transportation and operations"
-    },
-    { 
-      value: "cyber-attack", 
-      label: "Cyber Attack",
+      value: "distributor_hub_failure", 
+      label: "Distributor Hub Failure",
       icon: Network,
-      description: "Digital infrastructure disruption affecting operations"
+      description: "Critical distribution center failure (Tier 2 nodes)",
+      category: "Node-Only"
     },
     { 
-      value: "supplier-failure", 
-      label: "Supplier Failure",
+      value: "random_supplier_failure", 
+      label: "Random Supplier Failure",
       icon: DollarSign,
-      description: "Supplier bankruptcy or operational shutdown"
+      description: "Random supplier node disruption (5 suppliers)",
+      category: "Node-Only"
+    },
+    { 
+      value: "central", 
+      label: "High-Centrality Node Failure",
+      icon: TrendingDown,
+      description: "High betweenness centrality node failure (5 nodes from top 10%)",
+      category: "Node-Only"
+    },
+    { 
+      value: "random_multi_node", 
+      label: "Random Multi-Node Failure",
+      icon: AlertTriangle,
+      description: "Random failure of 1-6 nodes simultaneously",
+      category: "Node-Only"
+    },
+    // Edge-Only Disruptions (4 types)
+    { 
+      value: "transportation_route_disruption", 
+      label: "Transportation Route Disruption",
+      icon: Clock,
+      description: "Weather/accidents affecting 5-15 transportation routes",
+      category: "Edge-Only"
+    },
+    { 
+      value: "trade_restriction", 
+      label: "Trade Restriction",
+      icon: AlertTriangle,
+      description: "Geopolitical conflicts blocking cross-border routes",
+      category: "Edge-Only"
+    },
+    { 
+      value: "cyber_attack_logistics", 
+      label: "Cyber Attack on Logistics",
+      icon: Network,
+      description: "Digital infrastructure attack on logistics network (10-30% edges)",
+      category: "Edge-Only"
+    },
+    { 
+      value: "major_supplier_failure", 
+      label: "Major Supplier Failure",
+      icon: DollarSign,
+      description: "High-capacity supplier failure (1-3 suppliers, all outgoing edges)",
+      category: "Edge-Only"
+    },
+    // Hybrid Disruptions (2 types)
+    { 
+      value: "infrastructure_failure", 
+      label: "Infrastructure Failure",
+      icon: AlertTriangle,
+      description: "Regional infrastructure collapse (nodes + edges within radius)",
+      category: "Hybrid"
+    },
+    { 
+      value: "hybrid_node_edge", 
+      label: "Hybrid Node + Edge Disruption",
+      icon: TrendingDown,
+      description: "Combined regional node failure + transportation route failures",
+      category: "Hybrid"
     },
   ];
 
@@ -133,11 +212,12 @@ export function WhatIfSimulation() {
         throw new Error('Please enter valid node IDs (0-199)');
       }
       
-      // Call GNN API
+      // Call GNN API with buffer capacity
       const response = await gnnApi.predict({
         disrupted_nodes: nodeIds,
         disrupted_edges: [],
-        disruption_severity: severity[0] / 100 // Normalize to 0-1
+        disruption_severity: severity[0] / 100, // Normalize to 0-1
+        buffer_capacity: bufferCapacity[0] / 100 // Normalize to 0-1
       });
       
       // Store predictions
@@ -244,38 +324,21 @@ export function WhatIfSimulation() {
         </p>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="nodeIds">Disrupted Node IDs (comma-separated)</Label>
-            <Input
-              id="nodeIds"
-              type="text"
-              value={disruptedNodeIds}
-              onChange={(e) => setDisruptedNodeIds(e.target.value)}
-              placeholder="e.g., 0,5,10,15"
-              disabled={predicting}
-              className="font-mono"
-            />
-            <p className="text-xs text-muted-foreground">
-              Enter node IDs from 0-199, separated by commas
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="disruption">Disruption Type</Label>
-            <Select value={selectedDisruption} onValueChange={setSelectedDisruption} disabled={predicting}>
-              <SelectTrigger id="disruption">
-                <SelectValue placeholder="Choose disruption type" />
-              </SelectTrigger>
-              <SelectContent>
-                {disruptionTypes.map((type) => (
-                  <SelectItem key={type.value} value={type.value}>
-                    {type.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {/* Step 1: Disruption Type Selection (Always Visible) */}
+        <div className="space-y-2">
+          <Label htmlFor="disruption">Step 1: Select Disruption Type</Label>
+          <Select value={selectedDisruption} onValueChange={setSelectedDisruption} disabled={predicting}>
+            <SelectTrigger id="disruption">
+              <SelectValue placeholder="Choose disruption type" />
+            </SelectTrigger>
+            <SelectContent>
+              {disruptionTypes.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  {type.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
@@ -287,24 +350,201 @@ export function WhatIfSimulation() {
           </p>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex justify-between">
-            <Label htmlFor="severity">Disruption Severity</Label>
-            <span className="text-sm font-medium">{severity[0]}%</span>
+        {/* Step 2: Disruption-Specific Configuration */}
+        {selectedDisruption === "trade_restriction" && (
+          <div className="p-4 bg-amber-50 rounded-lg border-2 border-amber-300 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <h4 className="font-semibold text-sm text-amber-900">Step 2: Trade Restriction Configuration</h4>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="country1">Country 1</Label>
+                <Select value={tradeCountry1} onValueChange={setTradeCountry1} disabled={predicting}>
+                  <SelectTrigger id="country1">
+                    <SelectValue placeholder="Select first country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCountries.length > 0 ? (
+                      availableCountries.map((country) => (
+                        <SelectItem key={country} value={country}>
+                          {country}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="loading" disabled>Loading countries...</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="country2">Country 2</Label>
+                <Select value={tradeCountry2} onValueChange={setTradeCountry2} disabled={predicting}>
+                  <SelectTrigger id="country2">
+                    <SelectValue placeholder="Select second country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCountries.length > 0 ? (
+                      availableCountries.map((country) => (
+                        <SelectItem key={country} value={country}>
+                          {country}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="loading" disabled>Loading countries...</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label htmlFor="tariff">Tariff Rate (Capacity Impact)</Label>
+                <span className="text-sm font-medium text-amber-900">{tariffRate[0]}%</span>
+              </div>
+              <Slider
+                id="tariff"
+                value={tariffRate}
+                onValueChange={setTariffRate}
+                min={20}
+                max={70}
+                step={5}
+                className="w-full"
+                disabled={predicting}
+              />
+              <p className="text-xs text-amber-700">
+                Tariff impact on cross-border capacity between {tradeCountry1} and {tradeCountry2} (20-70%)
+              </p>
+            </div>
+
+            <div className="p-2 bg-white rounded border border-amber-200">
+              <p className="text-xs text-amber-800">
+                <strong>Trade Policy:</strong> {tariffRate[0]}% tariff between {tradeCountry1} ↔ {tradeCountry2}
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                This will reduce capacity on all cross-border routes between these countries by approximately {tariffRate[0]}% (±10% variation for implementation differences)
+              </p>
+            </div>
           </div>
-          <Slider
-            id="severity"
-            value={severity}
-            onValueChange={setSeverity}
-            max={100}
-            step={5}
-            className="w-full"
-            disabled={predicting}
-          />
-          <p className="text-xs text-muted-foreground">
-            Severity factor for GNN prediction (0-100%)
-          </p>
-        </div>
+        )}
+
+        {selectedDisruption === "random_supplier_failure" && (
+          <div className="p-4 bg-purple-50 rounded-lg border-2 border-purple-300 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign className="h-4 w-4 text-purple-600" />
+              <h4 className="font-semibold text-sm text-purple-900">Step 2: Random Supplier Failure Configuration</h4>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label htmlFor="numSuppliers">Number of Suppliers</Label>
+                <span className="text-sm font-medium text-purple-900">{numSuppliers[0]}</span>
+              </div>
+              <Slider
+                id="numSuppliers"
+                value={numSuppliers}
+                onValueChange={setNumSuppliers}
+                min={1}
+                max={10}
+                step={1}
+                className="w-full"
+                disabled={predicting}
+              />
+              <p className="text-xs text-purple-700">
+                Number of random supplier nodes that will fail (1-10)
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label htmlFor="supplierSeverity">Impact Severity</Label>
+                <span className="text-sm font-medium text-purple-900">{supplierSeverity[0]}%</span>
+              </div>
+              <Slider
+                id="supplierSeverity"
+                value={supplierSeverity}
+                onValueChange={setSupplierSeverity}
+                min={10}
+                max={100}
+                step={5}
+                className="w-full"
+                disabled={predicting}
+              />
+              <p className="text-xs text-purple-700">
+                Production impact percentage on failed suppliers (10-100%)
+              </p>
+            </div>
+
+            <div className="p-2 bg-white rounded border border-purple-200">
+              <p className="text-xs text-purple-800">
+                <strong>Scenario:</strong> {numSuppliers[0]} random supplier{numSuppliers[0] > 1 ? 's' : ''} will fail with {supplierSeverity[0]}% production impact
+              </p>
+              <p className="text-xs text-purple-700 mt-1">
+                This simulates unexpected supplier failures due to operational issues, quality problems, or financial difficulties
+              </p>
+            </div>
+          </div>
+        )}
+
+        {selectedDisruption === "transportation_route_disruption" && (
+          <div className="p-4 bg-blue-50 rounded-lg border-2 border-blue-300 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="h-4 w-4 text-blue-600" />
+              <h4 className="font-semibold text-sm text-blue-900">Step 2: Transportation Route Disruption Configuration</h4>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label htmlFor="numRoutes">Number of Routes</Label>
+                <span className="text-sm font-medium text-blue-900">{numRoutes[0]}</span>
+              </div>
+              <Slider
+                id="numRoutes"
+                value={numRoutes}
+                onValueChange={setNumRoutes}
+                min={1}
+                max={15}
+                step={1}
+                className="w-full"
+                disabled={predicting}
+              />
+              <p className="text-xs text-blue-700">
+                Number of transportation routes/edges that will be disrupted (1-15)
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="routeSeverity">Severity Type</Label>
+              <Select value={routeSeverityType} onValueChange={setRouteSeverityType} disabled={predicting}>
+                <SelectTrigger id="routeSeverity">
+                  <SelectValue placeholder="Select severity" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="minor">Minor (20-40% capacity loss)</SelectItem>
+                  <SelectItem value="moderate">Moderate (40-70% capacity loss)</SelectItem>
+                  <SelectItem value="severe">Severe (70-100% capacity loss)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-blue-700">
+                Severity of disruption caused by weather, accidents, or infrastructure issues
+              </p>
+            </div>
+
+            <div className="p-2 bg-white rounded border border-blue-200">
+              <p className="text-xs text-blue-800">
+                <strong>Scenario:</strong> {numRoutes[0]} transportation route{numRoutes[0] > 1 ? 's' : ''} will experience {routeSeverityType} disruption
+              </p>
+              <p className="text-xs text-blue-700 mt-1">
+                {routeSeverityType === 'minor' && 'Minor delays due to weather or minor accidents (20-40% capacity reduction)'}
+                {routeSeverityType === 'moderate' && 'Moderate disruptions from severe weather or road closures (40-70% capacity reduction)'}
+                {routeSeverityType === 'severe' && 'Severe disruptions from natural disasters or major infrastructure failures (70-100% capacity reduction)'}
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-2">
           <Button onClick={handleSimulate} className="flex-1" disabled={predicting || loading}>

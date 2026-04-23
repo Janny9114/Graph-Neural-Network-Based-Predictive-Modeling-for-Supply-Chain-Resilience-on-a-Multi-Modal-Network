@@ -9,7 +9,8 @@ import {
   TableRow,
 } from "./ui/table";
 import { useEffect, useState } from "react";
-import Papa from "papaparse";
+import { Button } from "./ui/button";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface Supplier {
   id: string;
@@ -26,23 +27,29 @@ interface Supplier {
 export function SupplierRiskTable() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 100;
 
   useEffect(() => {
-    // Load node data from synthetic_nodes.csv
-    Papa.parse('/synthetic_nodes.csv', {
-      download: true,
-      header: true,
-      complete: (results: any) => {
-        const nodes = results.data;
+    // Load node data from API (uses uploaded CSV or default)
+    fetchNodeData();
+  }, []);
+
+  const fetchNodeData = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('http://localhost:5000/api/graph');
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        const nodes = data.nodes;
         
-        // Show all nodes (all tiers)
+        // Show all nodes (all tiers) - don't slice here, we'll paginate later
         const supplierNodes = nodes
-          .filter((node: any) => node.node_id)
-          .slice(0, 100) // Limit to first 100 nodes for display
           .map((node: any, index: number) => {
-            const riskLevel = parseFloat(node.risk_level);
-            const reliability = parseFloat(node.reliability);
-            const tierNum = parseInt(node.tier);
+            const riskLevel = node.risk_level || 0.5;
+            const reliability = node.reliability || 0.8;
+            const tierNum = node.tier || 0;
             
             // Determine node type based on tier
             let nodeType = "";
@@ -70,26 +77,25 @@ export function SupplierRiskTable() {
             
             return {
               id: `N${String(index + 1).padStart(3, '0')}`,
-              name: `${node.region} Node ${node.node_id}`,
-              location: node.region,
+              name: node.name || `Node ${index}`,
+              location: node.region || 'Unknown',
               tier: tierNum,
               nodeType: nodeType,
               riskLevel: riskCategory,
               riskScore: Math.round(riskLevel * 100),
               resilience: Math.round(reliability * 100),
-              capacity: Math.round(parseFloat(node.capacity))
+              capacity: Math.round(node.capacity || 1000)
             };
           });
         
         setSuppliers(supplierNodes);
-        setLoading(false);
-      },
-      error: (error: any) => {
-        console.error('Error loading node data:', error);
-        setLoading(false);
       }
-    });
-  }, []);
+    } catch (error) {
+      console.error('Error loading node data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
   
   const getRiskBadgeVariant = (risk: string) => {
     switch (risk) {
@@ -136,6 +142,12 @@ export function SupplierRiskTable() {
     }
   };
 
+  // Pagination logic
+  const totalPages = Math.ceil(suppliers.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentSuppliers = suppliers.slice(startIndex, endIndex);
+
   if (loading) {
     return (
       <Card className="col-span-4">
@@ -175,7 +187,7 @@ export function SupplierRiskTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {suppliers.map((supplier) => (
+            {currentSuppliers.map((supplier) => (
               <TableRow key={supplier.id}>
                 <TableCell className="font-medium">{supplier.id}</TableCell>
                 <TableCell>{supplier.name}</TableCell>
@@ -220,6 +232,38 @@ export function SupplierRiskTable() {
             ))}
           </TableBody>
         </Table>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4">
+            <div className="text-sm text-muted-foreground">
+              Showing {startIndex + 1}-{Math.min(endIndex, suppliers.length)} of {suppliers.length} nodes
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Previous
+              </Button>
+              <div className="text-sm">
+                Page {currentPage} of {totalPages}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+              >
+                Next
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

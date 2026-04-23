@@ -86,6 +86,7 @@ export function WorldMapNetwork() {
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [center, setCenter] = useState<[number, number]>([20, 30]);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
   useEffect(() => {
     // Load nodes data
@@ -159,33 +160,33 @@ export function WorldMapNetwork() {
   const displayLocations = dynamicLocations.length > 0 ? dynamicLocations : locations;
   const displayConnections = dynamicConnections.length > 0 ? dynamicConnections : connections;
 
-  const getRiskColor = (riskLevel: string) => {
-    switch (riskLevel) {
-      case "Low":
-        return "#10b981"; // green
-      case "Medium":
-        return "#f59e0b"; // yellow/orange
-      case "High":
-        return "#ef4444"; // red
-      case "Critical":
-        return "#7f1d1d"; // dark red
+  const getTierColor = (tier: number) => {
+    switch (tier) {
+      case 0:
+        return "#9333ea"; // Purple for Tier 0 (Supplier)
+      case 1:
+        return "#3b82f6"; // Blue for Tier 1 (Manufacturer)
+      case 2:
+        return "#10b981"; // Green for Tier 2 (Distributor)
+      case 3:
+        return "#f59e0b"; // Orange for Tier 3 (Retailer)
       default:
-        return "#6b7280"; // gray
+        return "#94a3b8"; // Gray for unknown
     }
   };
 
-  const getNodeSize = (type: string) => {
-    switch (type) {
-      case "supplier":
-        return 10;
-      case "manufacturer":
-        return 12;
-      case "distribution":
-        return 8;
-      case "retailer":
-        return 6;
+  const getTierColorWithOpacity = (tier: number) => {
+    switch (tier) {
+      case 0:
+        return "#9333ea50"; // Purple with opacity
+      case 1:
+        return "#3b82f650"; // Blue with opacity
+      case 2:
+        return "#10b98150"; // Green with opacity
+      case 3:
+        return "#f59e0b50"; // Orange with opacity
       default:
-        return 6;
+        return "#94a3b850"; // Gray with opacity
     }
   };
 
@@ -218,6 +219,14 @@ export function WorldMapNetwork() {
   const handleReset = () => {
     setZoom(1);
     setCenter([20, 30]);
+  };
+
+  // Calculate node size based on zoom level (inverse relationship)
+  const getNodeRadius = (baseRadius: number) => {
+    // As zoom increases, node size decreases
+    // At zoom 1: full size, at zoom 8: 40% size
+    const scaleFactor = Math.max(0.4, 1 / Math.sqrt(zoom));
+    return baseRadius * scaleFactor;
   };
 
   return (
@@ -283,19 +292,17 @@ export function WorldMapNetwork() {
               
               if (!fromLocation || !toLocation) return null;
 
+              // Check if this edge is connected to the hovered node
+              const isConnected = hoveredNode && (connection.from === hoveredNode || connection.to === hoveredNode);
+
               return (
                 <Line
                   key={`connection-${i}`}
                   from={fromLocation.coordinates}
                   to={toLocation.coordinates}
-                  stroke={getConnectionColor(connection.from)}
-                  strokeWidth={2}
+                  stroke={isConnected ? "#3b82f6" : getConnectionColor(connection.from)}
+                  strokeWidth={isConnected ? 2 : 0.5}
                   strokeLinecap="round"
-                  style={{
-                    default: { outline: "none" },
-                    hover: { outline: "none" },
-                    pressed: { outline: "none" },
-                  }}
                 />
               );
             })}
@@ -305,21 +312,24 @@ export function WorldMapNetwork() {
               <Marker key={location.id} coordinates={location.coordinates}>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <g>
+                    <g
+                      onMouseEnter={() => setHoveredNode(location.id)}
+                      onMouseLeave={() => setHoveredNode(null)}
+                    >
                       {/* Outer glow for manufacturers */}
                       {location.type === "manufacturer" && (
                         <circle
-                          r={getNodeSize(location.type) + 4}
-                          fill={getRiskColor(location.riskLevel)}
+                          r={getNodeRadius(12)}
+                          fill={getTierColorWithOpacity(location.tier || 0)}
                           fillOpacity={0.3}
                         />
                       )}
                       {/* Main node */}
                       <circle
-                        r={getNodeSize(location.type)}
-                        fill={getRiskColor(location.riskLevel)}
+                        r={getNodeRadius(location.type === "manufacturer" ? 8 : location.type === "distribution" ? 6 : 5)}
+                        fill={getTierColor(location.tier || 0)}
                         stroke="#fff"
-                        strokeWidth={2}
+                        strokeWidth={getNodeRadius(2)}
                         style={{
                           cursor: "pointer",
                         }}
@@ -327,7 +337,7 @@ export function WorldMapNetwork() {
                       {/* Icon overlay for manufacturers */}
                       {location.type === "manufacturer" && (
                         <circle
-                          r={4}
+                          r={getNodeRadius(4)}
                           fill="#fff"
                         />
                       )}
@@ -389,7 +399,7 @@ export function WorldMapNetwork() {
               <span>Distributor (Tier 2)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-[6px] h-[6px] rounded-full bg-orange-600"></div>
+              <div className="w-[6px] h-[6px] rounded-full bg-orange-500"></div>
               <span>Retailer (Tier 3)</span>
             </div>
           </div>

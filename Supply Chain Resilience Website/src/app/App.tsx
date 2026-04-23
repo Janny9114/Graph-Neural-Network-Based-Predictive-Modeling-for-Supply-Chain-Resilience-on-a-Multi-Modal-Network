@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RiskMetricsCard } from "./components/RiskMetricsCard";
 import { ResilienceChart } from "./components/ResilienceChart";
 import { SupplierRiskTable } from "./components/SupplierRiskTable";
@@ -11,6 +11,11 @@ import { WhatIfSimulation } from "./components/WhatIfSimulation";
 import { MitigationPlanning } from "./components/MitigationPlanning";
 import { AIChatbot } from "./components/AIChatbot";
 import { CustomGraphUpload } from "./components/CustomerGraphUpload";
+import { ModelComparisonTable } from "./components/ModelComparisonTable";
+import { VulnerableNodesAnalysis } from "./components/VulnerableNodesAnalysis";
+import { NetworkTopologyMetrics } from "./components/NetworkTopologyMetrics";
+import { CascadingFailureHeatmap } from "./components/CascadingFailureHeatmap";
+import { PipelineRunner } from "./components/PipelineRunner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Button } from "./components/ui/button";
 import { 
@@ -25,9 +30,72 @@ import {
 
 export default function App() {
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleString());
+  const [nodeMetrics, setNodeMetrics] = useState({
+    total: 49,
+    high: 0,
+    medium: 13,
+    safe: 36
+  });
+  const [overviewMetrics, setOverviewMetrics] = useState({
+    avgResilience: 85,
+    avgRisk: 35,
+    avgLeadTime: 5,
+    networkDensity: 1.8
+  });
+
+  useEffect(() => {
+    fetchNodeMetrics();
+    fetchOverviewMetrics();
+  }, []);
+
+  const fetchNodeMetrics = async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/graph');
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        const nodes = data.nodes;
+        const total = nodes.length;
+        
+        // Calculate risk categories
+        let high = 0, medium = 0, safe = 0;
+        nodes.forEach((node: any) => {
+          const riskLevel = node.risk_level || 0.5;
+          if (riskLevel >= 0.9) high++;
+          else if (riskLevel >= 0.6) high++;
+          else if (riskLevel >= 0.3) medium++;
+          else safe++;
+        });
+        
+        setNodeMetrics({ total, high, medium, safe });
+      }
+    } catch (error) {
+      console.error('Error fetching node metrics:', error);
+    }
+  };
+
+  const fetchOverviewMetrics = async () => {
+    try {
+      const response = await fetch('http://localhost:5000/api/overview-metrics');
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        setOverviewMetrics({
+          avgResilience: data.avg_resilience,
+          avgRisk: data.avg_risk,
+          avgLeadTime: data.avg_lead_time,
+          networkDensity: data.network_density
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching overview metrics:', error);
+    }
+  };
 
   const handleRefresh = () => {
     setLastUpdated(new Date().toLocaleString());
+    fetchNodeMetrics();
+    fetchOverviewMetrics();
   };
 
   return (
@@ -88,31 +156,37 @@ export default function App() {
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
+            {/* Pipeline Runner */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <PipelineRunner />
+            </div>
+
             {/* Key Metrics */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <RiskMetricsCard
-                title="Overall Resilience Score"
-                value={88}
-                change={3.2}
+                title="Avg Resilience Score"
+                value={overviewMetrics.avgResilience}
+                change={0}
                 trend="up"
               />
               <RiskMetricsCard
-                title="Supply Chain Risk"
-                value={25}
-                change={-5.1}
-                trend="up"
+                title="Avg Risk Level"
+                value={overviewMetrics.avgRisk}
+                change={0}
+                trend="down"
               />
               <RiskMetricsCard
-                title="Supplier Performance"
-                value={90}
-                change={2.8}
-                trend="up"
+                title="Avg Lead Time"
+                value={overviewMetrics.avgLeadTime}
+                change={0}
+                unit=" days"
+                trend="neutral"
               />
               <RiskMetricsCard
-                title="Active Alerts"
-                value={12}
-                change={-15.0}
-                unit=""
+                title="Network Density"
+                value={overviewMetrics.networkDensity}
+                change={0}
+                unit=" edges/node"
                 trend="up"
               />
             </div>
@@ -120,6 +194,11 @@ export default function App() {
             {/* World Map Network */}
             <div className="grid gap-6 md:grid-cols-4">
               <WorldMapNetwork />
+            </div>
+
+            {/* Model Comparison Table */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <ModelComparisonTable />
             </div>
 
             {/* Charts */}
@@ -144,28 +223,28 @@ export default function App() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <RiskMetricsCard
                 title="Total Nodes"
-                value={49}
+                value={nodeMetrics.total}
                 change={0}
                 unit=""
                 trend="neutral"
               />
               <RiskMetricsCard
                 title="High Risk Nodes"
-                value={0}
+                value={nodeMetrics.high}
                 change={0}
                 unit=""
                 trend="up"
               />
               <RiskMetricsCard
                 title="Medium Risk Nodes"
-                value={13}
+                value={nodeMetrics.medium}
                 change={0}
                 unit=""
                 trend="neutral"
               />
               <RiskMetricsCard
                 title="Safe Nodes"
-                value={36}
+                value={nodeMetrics.safe}
                 change={0}
                 unit=""
                 trend="up"
@@ -184,39 +263,19 @@ export default function App() {
 
           {/* Risk Analysis Tab */}
           <TabsContent value="risks" className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <RiskMetricsCard
-                title="Critical Risks"
-                value={3}
-                change={-25.0}
-                unit=""
-                trend="up"
-              />
-              <RiskMetricsCard
-                title="High Risks"
-                value={8}
-                change={-11.1}
-                unit=""
-                trend="up"
-              />
-              <RiskMetricsCard
-                title="Medium Risks"
-                value={15}
-                change={7.1}
-                unit=""
-                trend="down"
-              />
-              <RiskMetricsCard
-                title="Risk Mitigation Rate"
-                value={78}
-                change={5.4}
-                trend="up"
-              />
-            </div>
-
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
               <RiskDistributionChart />
-              <PerformanceMetrics />
+              <NetworkTopologyMetrics />
+            </div>
+
+            {/* Vulnerable Node Analysis — Betweenness, Eigenvector, Articulation Points */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <VulnerableNodesAnalysis />
+            </div>
+
+            {/* Cascading Failure Simulation */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <CascadingFailureHeatmap />
             </div>
 
             <div className="grid gap-6 md:grid-cols-4">

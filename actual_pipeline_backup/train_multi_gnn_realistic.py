@@ -405,6 +405,8 @@ def train_epoch(model, loader, optimizer, device, class_weights, use_edge_attr=F
             out = model(data.x, data.edge_index)
         
         loss = F.nll_loss(out[data.train_mask], data.y[data.train_mask], weight=class_weights)
+
+        
         
         loss.backward()
         optimizer.step()

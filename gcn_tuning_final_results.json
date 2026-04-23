@@ -1,0 +1,12 @@
+{
+  "best_hyperparameters": {
+    "hidden_channels": 256,
+    "num_layers": 4,
+    "dropout": 0.1,
+    "learning_rate": 0.0028630983390126714,
+    "weight_decay": 7.217002050311984e-06,
+    "val_accuracy": 0.7712880205085568
+  },
+  "val_accuracy": 0.7717730201621285,
+  "test_accuracy": 0.7675093244923332
+}
