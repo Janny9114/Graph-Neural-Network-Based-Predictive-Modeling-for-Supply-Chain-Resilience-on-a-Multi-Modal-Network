@@ -892,32 +892,42 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                         scenario_node_features[node_idx, 2] * (1 + severity)
                     )
             
-            # For edge disruptions, mark target nodes as disrupted AND modify their features
+            # For edge disruptions, modify EDGE features (NOT node features!)
+            # Create modified edge features
+            scenario_edge_attr = base_edge_attr.clone()
+            
             if 'disrupted_edges' in scenario and scenario['disrupted_edges'] is not None:
                 # Get edge_capacity_reduction to extract severity
                 edge_capacity_reduction = scenario.get('edge_capacity_reduction', {})
                 
                 for edge in scenario['disrupted_edges']:
                     if isinstance(edge, tuple) and len(edge) >= 2:
-                        target = edge[1]
+                        # Find edge index in edge_index
+                        source, target = edge[0], edge[1]
+                        
+                        # Find the edge in edge_index
+                        edge_mask = (edge_index[0] == source) & (edge_index[1] == target)
+                        edge_idx = torch.where(edge_mask)[0]
+                        
+                        if len(edge_idx) > 0:
+                            edge_idx = edge_idx[0].item()
+                            
+                            # Get severity for this edge (default to 0.5 if not found)
+                            severity = edge_capacity_reduction.get(edge, 0.5)
+                            
+                            # Modify EDGE features based on severity:
+                            # Feature 0: lead_time *= (1 + severity)  # Longer delays due to disruption
+                            scenario_edge_attr[edge_idx, 0] *= (1 + severity)
+                            
+                            # Feature 2: capacity_share *= (1 - severity)  # Reduced capacity
+                            scenario_edge_attr[edge_idx, 2] *= (1 - severity)
+                            
+                            # Feature 3: disruption_prob = 1.0  # Mark as disrupted
+                            scenario_edge_attr[edge_idx, 3] = 1.0
+                        
+                        # Mark target node as affected (but don't modify its features!)
                         target_idx = int(target)
                         is_disrupted[target_idx, 0] = 1.0
-                        
-                        # Get severity for this edge (default to 0.5 if not found)
-                        severity = edge_capacity_reduction.get(edge, 0.5)
-                        
-                        # Modify target node features based on severity (supply shortage):
-                        # Feature 0: capacity *= (1 - severity)
-                        scenario_node_features[target_idx, 0] *= (1 - severity)
-                        
-                        # Feature 3: reliability *= (1 - severity)
-                        scenario_node_features[target_idx, 3] *= (1 - severity)
-                        
-                        # Feature 2: risk_level = min(1.0, risk_level * (1 + severity))
-                        scenario_node_features[target_idx, 2] = min(
-                            1.0, 
-                            scenario_node_features[target_idx, 2] * (1 + severity)
-                        )
             
             # Concatenate modified features with is_initially_disrupted
             x = torch.cat([scenario_node_features, is_disrupted], dim=1)
@@ -932,8 +942,8 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                 y[node_id] = result['label']
                 train_mask[node_id] = True
             
-            # Use STATIC edge features only
-            edge_attr = base_edge_attr.clone()
+            # Use scenario-specific edge features (modified for edge disruptions)
+            edge_attr = scenario_edge_attr
             
             # Create Data object with FAIR features
             data = Data(

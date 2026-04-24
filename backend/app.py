@@ -402,21 +402,6 @@ def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity
                 node_df_modified.loc[node_id, 'risk_level'] * (1 + severity)
             )
     
-    # For EDGE disruptions, modify target node features
-    if disrupted_edges:
-        for edge in disrupted_edges:
-            target = edge[1]
-            # Modify target node features based on severity (supply shortage):
-            # capacity *= (1 - severity)
-            node_df_modified.loc[target, 'capacity'] *= (1 - severity)
-            # reliability *= (1 - severity)
-            node_df_modified.loc[target, 'reliability'] *= (1 - severity)
-            # risk_level = min(1.0, risk_level * (1 + severity))
-            node_df_modified.loc[target, 'risk_level'] = min(
-                1.0, 
-                node_df_modified.loc[target, 'risk_level'] * (1 + severity)
-            )
-    
     # Base features - Use EXACT SAME preprocessing as training!
     # Training uses graph_preprocessing.standardize_node_features()
     base_features_raw = node_df_modified[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values
@@ -491,6 +476,28 @@ def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity
         source_risk = float(node_df.iloc[source_idx]['risk_level'])
         target_risk = float(node_df.iloc[target_idx]['risk_level'])
         edge_attr[idx, 3] = (source_risk + target_risk) / 2.0
+    
+    # NEW: Modify EDGE features for edge disruptions (MATCHES TRAINING!)
+    if disrupted_edges:
+        for edge in disrupted_edges:
+            source, target = edge[0], edge[1]
+            
+            # Find the edge in edge_index
+            edge_mask = (edge_index[0] == source) & (edge_index[1] == target)
+            edge_idx = torch.where(edge_mask)[0]
+            
+            if len(edge_idx) > 0:
+                edge_idx = edge_idx[0].item()
+                
+                # Modify EDGE features based on severity:
+                # Feature 0: lead_time *= (1 + severity)  # Longer delays
+                edge_attr[edge_idx, 0] *= (1 + severity)
+                
+                # Feature 2: capacity_share *= (1 - severity)  # Reduced capacity
+                edge_attr[edge_idx, 2] *= (1 - severity)
+                
+                # Feature 3: disruption_prob = 1.0  # Mark as disrupted
+                edge_attr[edge_idx, 3] = 1.0
     
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
