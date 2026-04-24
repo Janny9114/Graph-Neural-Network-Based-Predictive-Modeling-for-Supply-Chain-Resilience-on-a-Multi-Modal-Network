@@ -38,7 +38,11 @@ export function SupplierRiskTable() {
   const fetchNodeData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:5000/api/graph');
+      const companyId = localStorage.getItem('company_id');
+      const url = companyId 
+        ? `http://localhost:5000/api/graph?company_id=${companyId}`
+        : 'http://localhost:5000/api/graph';
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.status === 'success') {

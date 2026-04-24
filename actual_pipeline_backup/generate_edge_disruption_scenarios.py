@@ -180,7 +180,7 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                 # 0 = Failed (>60% impact remains - severe disruption)
                 # 1 = Degraded (<60% impact remains - partial disruption)
                 # 2 = Normal (0% impact - fully operational)
-                if remaining_impact == 0:
+                if remaining_impact == 0.0:
                     label = 2  # Normal (fully operational)
                 elif impact_ratio < 0.6:
                     label = 1  # Degraded (some impact, but manageable)
@@ -221,8 +221,8 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
         """
         edges = list(G.edges())
         
-        # Select 1-5 random edges
-        num_disrupted = np.random.randint(1, 6)
+        # Select 1-15 random edges
+        num_disrupted = np.random.randint(1, 16)
         disrupted_edges = [edges[i] for i in np.random.choice(len(edges), size=num_disrupted, replace=False)]
         
         # Assign severity based on weather/accident type
@@ -276,11 +276,18 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             # Fallback: random edge disruption
             return self.simulate_transportation_route_disruption(G, base_buffers)
         
-        # Tariffs/restrictions reduce capacity by 30-70%
+        # ✅ FIX: Country-pair based tariff (same base rate for all edges)
+        # Tariffs are policy-based, not edge-specific
+        # Base tariff rate for this country pair (20-70%)
+        base_tariff_rate = np.random.uniform(0.20, 0.70)
+        
         edge_capacity_reduction = {}
         for edge in cross_border_edges:
-            reduction = np.random.uniform(0.3, 0.7)
-            edge_capacity_reduction[edge] = reduction
+            # Small variation (±10%) for implementation differences
+            # (e.g., different customs efficiency, product exemptions)
+            actual_reduction = base_tariff_rate * np.random.uniform(0.90, 1.10)
+            actual_reduction = np.clip(actual_reduction, 0.15, 0.75)
+            edge_capacity_reduction[edge] = actual_reduction
         
         # Simulate cascade
         results = self.simulate_edge_cascade(G, base_buffers, cross_border_edges, edge_capacity_reduction)
@@ -290,6 +297,7 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             'disrupted_edges': cross_border_edges,
             'edge_capacity_reduction': edge_capacity_reduction,
             'affected_regions': [region1, region2],
+            'base_tariff_rate': base_tariff_rate,
             'results': results
         }
     
@@ -358,8 +366,8 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             tier_2 = list(G.nodes())[100:150]
         
         # Select disrupted nodes at multiple tiers
-        num_tier_0 = np.random.randint(2, 5)  # 2-4 suppliers
-        num_tier_1 = np.random.randint(1, 3)  # 1-2 manufacturers
+        num_tier_0 = np.random.randint(2, 7)  # 2-6 suppliers
+        num_tier_1 = np.random.randint(1, 4)  # 1-2 manufacturers
         
         disrupted_tier_0 = np.random.choice(tier_0, size=min(num_tier_0, len(tier_0)), replace=False)
         disrupted_tier_1 = np.random.choice(tier_1, size=min(num_tier_1, len(tier_1)), replace=False)
@@ -562,17 +570,18 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
         
         # Define scenario types
         scenario_types = [
-            # Node-only (40%)
+            # Node-only (45%)
             'regional_failure_variable',
             'distributor_hub_failure',
             'random_supplier_failure',
             'central',
-            # Edge-only (40%)
+            'random_multi_node',              # ✅ NEW: 1-6 random nodes
+            # Edge-only (36%)
             'transportation_route_disruption',
             'trade_restriction',
             'cyber_attack_logistics',
             'major_supplier_failure',
-            # Hybrid (20%)
+            # Hybrid (18%)
             'infrastructure_failure',
             'hybrid_node_edge'
         ]
@@ -602,14 +611,21 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                 distributor_betweenness = [(n, betweenness[n]) for n in distributor_nodes]
                 distributor_betweenness.sort(key=lambda x: x[1], reverse=True)
                 
-                # Select top 10% by betweenness
-                top_10_pct = max(4, len(distributor_betweenness) // 10)
-                hub_candidates = [n for n, _ in distributor_betweenness[:top_10_pct]]
+                # ✅ FIX 1: Select top 20% (was 10%) for larger pool
+                top_20_pct = max(8, len(distributor_betweenness) // 5)  # At least 8 candidates
+                hub_candidates = [n for n, _ in distributor_betweenness[:top_20_pct]]
                 
-                # Select 2-4 random hubs from top 10%
-                num_hubs = np.random.randint(2, 5)
-                initial_nodes = list(np.random.choice(hub_candidates, size=min(num_hubs, len(hub_candidates)), replace=False))
+                # ✅ FIX 2: was 2-4 for more disruption
+                num_hubs = np.random.randint(2, 7)  # 4-10 hubs
+                initial_nodes = list(np.random.choice(
+                    hub_candidates, 
+                    size=min(num_hubs, len(hub_candidates)), 
+                    replace=False
+                ))
+                
+               
                 initial_impact_pcts = [np.random.uniform(0.1, 1.0) for _ in range(len(initial_nodes))]
+                
                 results = self.simulate_multi_node_cascade(G, base_buffers, initial_nodes, initial_impact_pcts)
                 
                 scenarios.append({
@@ -629,8 +645,9 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                     # Fallback: use all nodes if not enough suppliers
                     supplier_nodes = list(G.nodes())
                 
-                # Select 10 random suppliers
-                num_suppliers = min(10, len(supplier_nodes))
+                # Select 1-10 random suppliers
+                num_suppliers = np.random.randint(1, 11)  # 1-10 suppliers
+                num_suppliers = min(num_suppliers, len(supplier_nodes))
                 initial_nodes = list(np.random.choice(supplier_nodes, size=num_suppliers, replace=False))
                 initial_impact_pcts = [np.random.uniform(0.1, 1.0) for _ in range(num_suppliers)]
                 results = self.simulate_multi_node_cascade(G, base_buffers, initial_nodes, initial_impact_pcts)
@@ -654,6 +671,23 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                 # Select 5 random nodes from top 10%
                 initial_nodes = list(np.random.choice(central_candidates, size=min(5, len(central_candidates)), replace=False))
                 initial_impact_pcts = [np.random.uniform(0.1, 1.0) for _ in range(len(initial_nodes))]
+                results = self.simulate_multi_node_cascade(G, base_buffers, initial_nodes, initial_impact_pcts)
+                
+                scenarios.append({
+                    'scenario_id': i,
+                    'scenario_type': scenario_type,
+                    'disruption_category': 'node_only',
+                    'initial_node': initial_nodes,
+                    'initial_impact_pct': initial_impact_pcts,
+                    'results': results
+                })
+            
+            elif scenario_type == 'random_multi_node':
+                # ✅ NEW: Random 1-6 node disruption
+                nodes = list(G.nodes())
+                num_random = np.random.randint(1, 7)  # 1-6 random nodes
+                initial_nodes = list(np.random.choice(nodes, size=num_random, replace=False))
+                initial_impact_pcts = [np.random.uniform(0.1, 1.0) for _ in range(num_random)]
                 results = self.simulate_multi_node_cascade(G, base_buffers, initial_nodes, initial_impact_pcts)
                 
                 scenarios.append({
@@ -823,26 +857,33 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
         data_objects = []
         
         for scenario in tqdm(scenarios, desc="Creating Data objects"):
-            # CRITICAL FIX: Add is_initially_disrupted feature (binary: 0 or 1)
-            is_disrupted = torch.zeros((num_nodes, 1), dtype=torch.float)
+            # ENHANCED: Add disruption info with severity (2 features: is_disrupted + severity)
+            disruption_info = torch.zeros((num_nodes, 2), dtype=torch.float)
+            # Column 0: is_disrupted (binary: 0 or 1)
+            # Column 1: severity (continuous: 0.0 to 1.0)
             
-            # Mark initially disrupted nodes
+            # Mark initially disrupted nodes with severity
             if 'initial_node' in scenario and scenario['initial_node'] is not None:
                 if isinstance(scenario['initial_node'], list):
-                    for node_id in scenario['initial_node']:
-                        is_disrupted[int(node_id), 0] = 1.0
+                    for idx, node_id in enumerate(scenario['initial_node']):
+                        disruption_info[int(node_id), 0] = 1.0  # is_disrupted
+                        disruption_info[int(node_id), 1] = scenario['initial_impact_pct'][idx]  # severity
                 else:
-                    is_disrupted[int(scenario['initial_node']), 0] = 1.0
+                    disruption_info[int(scenario['initial_node']), 0] = 1.0  # is_disrupted
+                    disruption_info[int(scenario['initial_node']), 1] = scenario['initial_impact_pct']  # severity
             
-            # For edge disruptions, mark target nodes as disrupted
+            # For edge disruptions, mark target nodes as disrupted (severity = 1.0 for edge disruptions)
             if 'disrupted_edges' in scenario and scenario['disrupted_edges'] is not None:
                 for edge in scenario['disrupted_edges']:
                     if isinstance(edge, tuple) and len(edge) >= 2:
                         target = edge[1]
-                        is_disrupted[int(target), 0] = 1.0
+                        disruption_info[int(target), 0] = 1.0  # is_disrupted
+                        # If not already set by node disruption, use default severity
+                        if disruption_info[int(target), 1] == 0.0:
+                            disruption_info[int(target), 1] = 0.8  # Default severity for edge disruptions
             
-            # Concatenate base features with is_initially_disrupted
-            x = torch.cat([base_features, is_disrupted], dim=1)
+            # Concatenate base features with disruption info (is_disrupted + severity)
+            x = torch.cat([base_features, tier_encoding, disruption_info], dim=1)
             
             # Initialize labels and mask
             y = torch.full((num_nodes,), -1, dtype=torch.long)
@@ -897,11 +938,11 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             data_objects.append(data)
         
         print(f"  ✓ Created {len(data_objects)} Data objects")
-        print(f"  ✓ Node feature dimensions: {data_objects[0].x.shape} (6 base + 4 tier + 1 disruption indicator)")
+        print(f"  ✓ Node feature dimensions: {data_objects[0].x.shape} (6 base + 4 tier + 2 disruption info)")
         print(f"  ✓ Edge feature dimensions: {data_objects[0].edge_attr.shape} (4 static features)")
-        print(f"  ✓ Node features: [capacity, cost_factor, risk_level, reliability, x, y, tier_supplier, tier_manufacturer, tier_distributor, tier_retailer, is_initially_disrupted]")
+        print(f"  ✓ Node features: [capacity, cost_factor, risk_level, reliability, x, y, tier_supplier, tier_manufacturer, tier_distributor, tier_retailer, is_disrupted, severity]")
         print(f"  ✓ Edge features: [lead_time, cost, capacity_share, disruption_prob]")
-        print(f"  ✓ Models can now see WHERE disruptions originated!")
+        print(f"  ✓ Models can now see WHERE disruptions originated AND their SEVERITY!")
         
         return data_objects
 

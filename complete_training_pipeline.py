@@ -33,16 +33,16 @@ warnings.filterwarnings('ignore')
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# ✅ Import from actual_pipeline_backup
-from actual_pipeline_backup.generate_realistic_scenarios import RealisticDisruptionSimulator
-from actual_pipeline_backup.generate_edge_disruption_scenarios import EdgeDisruptionSimulator
-from actual_pipeline_backup.train_multi_gnn_realistic import (
+# ✅ Import from current directory (11-feature code)
+from generate_realistic_scenarios import RealisticDisruptionSimulator
+from generate_edge_disruption_scenarios import EdgeDisruptionSimulator
+from train_multi_gnn_realistic import (
     GATModel, GCNModel, GraphSAGEModel, GINModel, 
     TransformerConvModel, GINEModel,
     train_epoch, evaluate, load_scenario_data, split_scenarios, train_model
 )
-from actual_pipeline_backup.graph_construction import create_gnn_graph
-from actual_pipeline_backup.benchmark_ml_realistic import (
+from graph_construction import create_gnn_graph
+from benchmark_ml_realistic import (
     train_and_evaluate_model, benchmark_models
 )
 
@@ -123,11 +123,11 @@ class CompletePipeline:
         # Create PyG data objects
         data_objects = simulator.create_pyg_data_objects(G, node_df, edge_df, scenarios)
         
-        # Save scenarios
-        scenario_dir = os.path.join(self.output_dir, f'scenarios_{scenario_type}')
+        # Save scenarios with "pipeline_scenario" naming
+        scenario_dir = os.path.join(self.output_dir, 'pipeline_scenarios')
         simulator.save_scenarios(data_objects, output_dir=scenario_dir)
         
-        self.log(f"Scenarios saved to {scenario_dir}/")
+        self.log(f"Pipeline scenarios saved to {scenario_dir}/")
         
         return data_objects, scenario_dir
     
@@ -223,15 +223,24 @@ class CompletePipeline:
             model = model.to(self.device)
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
             
-            # Use imported train_model function
-            best_val_f1 = train_model(
+            # Use imported train_model function (saves to current directory)
+            best_val_f1, history = train_model(
                 model, model_name, train_loader, val_loader, optimizer, 
                 self.device, class_weights, use_edge_attr=use_edge_attr, 
                 num_epochs=300, patience=50
             )
             
+            # Move model file to output directory
+            model_filename = f'best_{model_name.lower().replace(" ", "_")}_model.pt'
+            if os.path.exists(model_filename):
+                import shutil
+                target_path = os.path.join(self.output_dir, model_filename)
+                shutil.move(model_filename, target_path)
+                self.log(f"Moved {model_filename} to {self.output_dir}/")
+            
             # Test evaluation
-            model.load_state_dict(torch.load(f'best_{model_name.lower().replace(" ", "_")}_model.pt'))
+            model_save_path = os.path.join(self.output_dir, model_filename)
+            model.load_state_dict(torch.load(model_save_path))
             test_loss, test_acc, test_prec, test_rec, test_f1, test_preds, test_labels = evaluate(model, test_loader, self.device, use_edge_attr)
             
             self.log(f"{model_name} - Test Accuracy: {test_acc:.4f}, F1: {test_f1:.4f}")

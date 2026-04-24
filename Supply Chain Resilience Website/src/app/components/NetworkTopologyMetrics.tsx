@@ -48,7 +48,11 @@ export function NetworkTopologyMetrics() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("http://localhost:5000/api/network-topology");
+      const companyId = localStorage.getItem('company_id');
+      const url = companyId 
+        ? `http://localhost:5000/api/network-topology?company_id=${companyId}`
+        : 'http://localhost:5000/api/network-topology';
+      const res = await fetch(url);
       const json = await res.json();
       if (json.status === "success") {
         setData(json as TopologyData);

@@ -4,7 +4,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 import { Button } from "./ui/button";
 import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
-import Papa from "papaparse";
 
 const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
@@ -22,33 +21,9 @@ interface Location {
   risk_level?: number;
 }
 
-interface NodeData {
-  node_id: string;
-  tier: number;
-  region: string;
-  x: number;
-  y: number;
-  capacity: number;
-  cost_factor: number;
-  risk_level: number;
-  reliability: number;
-}
-
-interface EdgeData {
-  source: string;
-  target: string;
-  lead_time: number;
-  transport_cost: number;
-  capacity_share: number;
-  disruption_probability: number;
-}
-
 const locations: Location[] = [
-  // Manufacturers (your facilities)
   { id: "M001", name: "Main Factory (USA)", type: "manufacturer", coordinates: [-95.7129, 37.0902], riskLevel: "Low", status: "Operational" },
   { id: "M002", name: "EU Manufacturing", type: "manufacturer", coordinates: [10.4515, 51.1657], riskLevel: "Low", status: "Operational" },
-  
-  // Suppliers
   { id: "S001", name: "TechParts Inc.", type: "supplier", coordinates: [121.5654, 25.0330], riskLevel: "Low", status: "Active" },
   { id: "S002", name: "Global Components", type: "supplier", coordinates: [116.4074, 39.9042], riskLevel: "Medium", status: "Delayed" },
   { id: "S003", name: "FastShip Logistics", type: "supplier", coordinates: [103.8198, 1.3521], riskLevel: "Low", status: "Active" },
@@ -57,27 +32,21 @@ const locations: Location[] = [
   { id: "S006", name: "Quality First Ltd.", type: "supplier", coordinates: [127.0276, 37.5665], riskLevel: "Low", status: "Active" },
   { id: "S007", name: "EuroParts GmbH", type: "supplier", coordinates: [13.4050, 52.5200], riskLevel: "Low", status: "Active" },
   { id: "S008", name: "Pacific Materials", type: "supplier", coordinates: [139.6503, 35.6762], riskLevel: "Medium", status: "Active" },
-  
-  // Distribution Centers
   { id: "D001", name: "East Coast Hub", type: "distribution", coordinates: [-74.0060, 40.7128], riskLevel: "Low", status: "Active" },
   { id: "D002", name: "Rotterdam Port", type: "distribution", coordinates: [4.4777, 51.9225], riskLevel: "Low", status: "Active" },
 ];
 
-// Define connections (edges) from suppliers to manufacturers
 const connections = [
-  // To Main Factory USA
-  { from: "S001", to: "M001" }, // Taiwan to USA
-  { from: "S002", to: "M001" }, // China to USA
-  { from: "S003", to: "M001" }, // Singapore to USA
-  { from: "S004", to: "M001" }, // India to USA
-  { from: "S005", to: "M001" }, // Vietnam to USA
-  { from: "D001", to: "M001" }, // East Coast Hub to Main Factory
-  
-  // To EU Manufacturing
-  { from: "S006", to: "M002" }, // South Korea to EU
-  { from: "S007", to: "M002" }, // Germany to EU Manufacturing
-  { from: "S008", to: "M002" }, // Japan to EU
-  { from: "D002", to: "M002" }, // Rotterdam to EU Manufacturing
+  { from: "S001", to: "M001" },
+  { from: "S002", to: "M001" },
+  { from: "S003", to: "M001" },
+  { from: "S004", to: "M001" },
+  { from: "S005", to: "M001" },
+  { from: "D001", to: "M001" },
+  { from: "S006", to: "M002" },
+  { from: "S007", to: "M002" },
+  { from: "S008", to: "M002" },
+  { from: "D002", to: "M002" },
 ];
 
 export function WorldMapNetwork() {
@@ -89,142 +58,117 @@ export function WorldMapNetwork() {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load nodes data
-    Papa.parse('/synthetic_nodes.csv', {
-      download: true,
-      header: true,
-      complete: (results: any) => {
-        console.log('CSV loaded:', results);
-        const nodes = results.data as NodeData[];
+    const fetchGraphData = async () => {
+      try {
+        const companyId = localStorage.getItem('company_id');
+        const url = companyId 
+          ? `http://localhost:5000/api/graph?company_id=${companyId}`
+          : 'http://localhost:5000/api/graph';
         
-        // Convert nodes to Location format
-        const loadedLocations: Location[] = nodes
-          .filter(node => node.node_id && node.x && node.y) // Filter out invalid rows
-          .map(node => {
-            const tierType = 
-              Number(node.tier) === 0 ? "supplier" :
-              Number(node.tier) === 1 ? "manufacturer" :
-              Number(node.tier) === 2 ? "distribution" :
-              "retailer";
-            
-            const riskLevelValue = Number(node.risk_level);
-            const riskLevel = 
-              riskLevelValue < 0.3 ? "Low" :
-              riskLevelValue < 0.6 ? "Medium" :
-              riskLevelValue < 0.9 ? "High" :
-              "Critical";
-            
-            return {
-              id: String(node.node_id),
-              name: `${node.region} Node ${node.node_id}`,
-              type: tierType,
-              coordinates: [Number(node.x), Number(node.y)] as [number, number],
-              riskLevel: riskLevel,
-              status: riskLevel === "Critical" ? "Risk Alert" : riskLevel === "High" ? "Delayed" : "Active",
-              tier: Number(node.tier),
-              region: String(node.region),
-              capacity: Number(node.capacity),
-              cost_factor: Number(node.cost_factor),
-              risk_level: riskLevelValue
-            };
-          });
+        console.log('WorldMap fetching from:', url);
+        const response = await fetch(url);
+        const data = await response.json();
         
-        console.log('Loaded locations:', loadedLocations.length);
-        setDynamicLocations(loadedLocations);
+        if (data.status === 'success') {
+          const nodes = data.nodes;
+          const edges = data.edges;
+          console.log('WorldMap loaded:', nodes.length, 'nodes,', edges.length, 'edges');
         
-        // Load edges data
-        Papa.parse('/synthetic_edges.csv', {
-          download: true,
-          header: true,
-          complete: (edgeResults: any) => {
-            const edges = edgeResults.data as EdgeData[];
-            
-            // Convert edges to connections format
-            const loadedConnections = edges
-              .filter(edge => edge.source && edge.target)
-              .map(edge => ({
-                from: edge.source,
-                to: edge.target
-              }));
-            
-            console.log('Loaded connections:', loadedConnections.length);
-            setDynamicConnections(loadedConnections);
-            setLoading(false);
-          }
-        });
+          const loadedLocations: Location[] = nodes
+            .filter((node: any) => node.id !== undefined && node.x && node.y)
+            .map((node: any) => {
+              const tierType = 
+                Number(node.tier) === 0 ? "supplier" :
+                Number(node.tier) === 1 ? "manufacturer" :
+                Number(node.tier) === 2 ? "distribution" :
+                "retailer";
+              
+              const riskLevelValue = Number(node.risk_level);
+              const riskLevel = 
+                riskLevelValue < 0.3 ? "Low" :
+                riskLevelValue < 0.6 ? "Medium" :
+                riskLevelValue < 0.9 ? "High" :
+                "Critical";
+              
+              return {
+                id: String(node.id),
+                name: node.name || `${node.region} Node ${node.id}`,
+                type: tierType,
+                coordinates: [Number(node.x), Number(node.y)] as [number, number],
+                riskLevel: riskLevel,
+                status: riskLevel === "Critical" ? "Risk Alert" : riskLevel === "High" ? "Delayed" : "Active",
+                tier: Number(node.tier),
+                region: String(node.region),
+                capacity: Number(node.capacity),
+                cost_factor: Number(node.cost_factor),
+                risk_level: riskLevelValue
+              };
+            });
+          
+          const loadedConnections = edges
+            .filter((edge: any) => edge.source !== undefined && edge.target !== undefined)
+            .map((edge: any) => ({
+              from: String(edge.source),
+              to: String(edge.target)
+            }));
+          
+          setDynamicLocations(loadedLocations);
+          setDynamicConnections(loadedConnections);
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Error fetching graph data:', error);
+        setLoading(false);
       }
-    });
+    };
+    
+    fetchGraphData();
   }, []);
 
-  // Use dynamic data if loaded, otherwise fall back to static data
   const displayLocations = dynamicLocations.length > 0 ? dynamicLocations : locations;
   const displayConnections = dynamicConnections.length > 0 ? dynamicConnections : connections;
 
   const getTierColor = (tier: number) => {
     switch (tier) {
-      case 0:
-        return "#9333ea"; // Purple for Tier 0 (Supplier)
-      case 1:
-        return "#3b82f6"; // Blue for Tier 1 (Manufacturer)
-      case 2:
-        return "#10b981"; // Green for Tier 2 (Distributor)
-      case 3:
-        return "#f59e0b"; // Orange for Tier 3 (Retailer)
-      default:
-        return "#94a3b8"; // Gray for unknown
+      case 0: return "#9333ea";
+      case 1: return "#3b82f6";
+      case 2: return "#10b981";
+      case 3: return "#f59e0b";
+      default: return "#94a3b8";
     }
   };
 
   const getTierColorWithOpacity = (tier: number) => {
     switch (tier) {
-      case 0:
-        return "#9333ea50"; // Purple with opacity
-      case 1:
-        return "#3b82f650"; // Blue with opacity
-      case 2:
-        return "#10b98150"; // Green with opacity
-      case 3:
-        return "#f59e0b50"; // Orange with opacity
-      default:
-        return "#94a3b850"; // Gray with opacity
+      case 0: return "#9333ea50";
+      case 1: return "#3b82f650";
+      case 2: return "#10b98150";
+      case 3: return "#f59e0b50";
+      default: return "#94a3b850";
     }
   };
 
   const getConnectionColor = (fromId: string) => {
-    const location = locations.find(loc => loc.id === fromId);
+    const location = displayLocations.find(loc => loc.id === fromId);
     if (!location) return "#94a3b8";
     
     switch (location.riskLevel) {
-      case "Low":
-        return "#10b98150";
-      case "Medium":
-        return "#f59e0b50";
-      case "High":
-        return "#ef444450";
-      case "Critical":
-        return "#7f1d1d50";
-      default:
-        return "#94a3b850";
+      case "Low": return "#10b98150";
+      case "Medium": return "#f59e0b50";
+      case "High": return "#ef444450";
+      case "Critical": return "#7f1d1d50";
+      default: return "#94a3b850";
     }
   };
 
-  const handleZoomIn = () => {
-    setZoom(prev => Math.min(prev * 1.5, 8));
-  };
-
-  const handleZoomOut = () => {
-    setZoom(prev => Math.max(prev / 1.5, 1));
-  };
-
+  const handleZoomIn = () => setZoom(prev => Math.min(prev * 1.5, 8));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev / 1.5, 1));
   const handleReset = () => {
     setZoom(1);
     setCenter([20, 30]);
   };
 
-  // Calculate node size based on zoom level (inverse relationship)
   const getNodeRadius = (baseRadius: number) => {
-    // As zoom increases, node size decreases
-    // At zoom 1: full size, at zoom 8: 40% size
     const scaleFactor = Math.max(0.4, 1 / Math.sqrt(zoom));
     return baseRadius * scaleFactor;
   };
@@ -252,10 +196,7 @@ export function WorldMapNetwork() {
       </CardHeader>
       <CardContent className="h-[600px]">
         <TooltipProvider>
-          <ComposableMap
-            projection="geoMercator"
-            className="w-full h-full"
-          >
+          <ComposableMap projection="geoMercator" className="w-full h-full">
             <ZoomableGroup
               center={center}
               zoom={zoom}
@@ -267,107 +208,95 @@ export function WorldMapNetwork() {
               }}
             >
               <Geographies geography={geoUrl}>
-              {({ geographies }: any) =>
-                geographies.map((geo: any) => (
-                  <Geography
-                    key={geo.rsmKey}
-                    geography={geo}
-                    fill="#E5E7EB"
-                    stroke="#9CA3AF"
-                    strokeWidth={0.5}
-                    style={{
-                      default: { outline: "none" },
-                      hover: { fill: "#D1D5DB", outline: "none" },
-                      pressed: { outline: "none" },
-                    }}
+                {({ geographies }: any) =>
+                  geographies.map((geo: any) => (
+                    <Geography
+                      key={geo.rsmKey}
+                      geography={geo}
+                      fill="#E5E7EB"
+                      stroke="#9CA3AF"
+                      strokeWidth={0.5}
+                      style={{
+                        default: { outline: "none" },
+                        hover: { fill: "#D1D5DB", outline: "none" },
+                        pressed: { outline: "none" },
+                      }}
+                    />
+                  ))
+                }
+              </Geographies>
+
+              {displayConnections.map((connection, i) => {
+                const fromLocation = displayLocations.find(loc => loc.id === connection.from);
+                const toLocation = displayLocations.find(loc => loc.id === connection.to);
+                
+                if (!fromLocation || !toLocation) return null;
+
+                const isConnected = hoveredNode && (connection.from === hoveredNode || connection.to === hoveredNode);
+
+                return (
+                  <Line
+                    key={`connection-${i}`}
+                    from={fromLocation.coordinates}
+                    to={toLocation.coordinates}
+                    stroke={isConnected ? "#3b82f6" : getConnectionColor(connection.from)}
+                    strokeWidth={isConnected ? 2 : 0.5}
+                    strokeLinecap="round"
                   />
-                ))
-              }
-            </Geographies>
+                );
+              })}
 
-            {/* Draw connections first (so they appear behind nodes) */}
-            {displayConnections.map((connection, i) => {
-              const fromLocation = displayLocations.find(loc => loc.id === connection.from);
-              const toLocation = displayLocations.find(loc => loc.id === connection.to);
-              
-              if (!fromLocation || !toLocation) return null;
-
-              // Check if this edge is connected to the hovered node
-              const isConnected = hoveredNode && (connection.from === hoveredNode || connection.to === hoveredNode);
-
-              return (
-                <Line
-                  key={`connection-${i}`}
-                  from={fromLocation.coordinates}
-                  to={toLocation.coordinates}
-                  stroke={isConnected ? "#3b82f6" : getConnectionColor(connection.from)}
-                  strokeWidth={isConnected ? 2 : 0.5}
-                  strokeLinecap="round"
-                />
-              );
-            })}
-
-            {/* Draw nodes */}
-            {displayLocations.map((location) => (
-              <Marker key={location.id} coordinates={location.coordinates}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <g
-                      onMouseEnter={() => setHoveredNode(location.id)}
-                      onMouseLeave={() => setHoveredNode(null)}
-                    >
-                      {/* Outer glow for manufacturers */}
-                      {location.type === "manufacturer" && (
+              {displayLocations.map((location) => (
+                <Marker key={location.id} coordinates={location.coordinates}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <g
+                        onMouseEnter={() => setHoveredNode(location.id)}
+                        onMouseLeave={() => setHoveredNode(null)}
+                      >
+                        {location.type === "manufacturer" && (
+                          <circle
+                            r={getNodeRadius(12)}
+                            fill={getTierColorWithOpacity(location.tier || 0)}
+                            fillOpacity={0.3}
+                          />
+                        )}
                         <circle
-                          r={getNodeRadius(12)}
-                          fill={getTierColorWithOpacity(location.tier || 0)}
-                          fillOpacity={0.3}
+                          r={getNodeRadius(location.type === "manufacturer" ? 8 : location.type === "distribution" ? 6 : 5)}
+                          fill={getTierColor(location.tier || 0)}
+                          stroke="#fff"
+                          strokeWidth={getNodeRadius(2)}
+                          style={{ cursor: "pointer" }}
                         />
-                      )}
-                      {/* Main node */}
-                      <circle
-                        r={getNodeRadius(location.type === "manufacturer" ? 8 : location.type === "distribution" ? 6 : 5)}
-                        fill={getTierColor(location.tier || 0)}
-                        stroke="#fff"
-                        strokeWidth={getNodeRadius(2)}
-                        style={{
-                          cursor: "pointer",
-                        }}
-                      />
-                      {/* Icon overlay for manufacturers */}
-                      {location.type === "manufacturer" && (
-                        <circle
-                          r={getNodeRadius(4)}
-                          fill="#fff"
-                        />
-                      )}
-                    </g>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <div className="text-sm">
-                      <p className="font-semibold">{location.name}</p>
-                      <p className="text-xs text-muted-foreground capitalize">
-                        {location.type} | Tier {location.tier}
-                      </p>
-                      <p className="text-xs">Region: {location.region}</p>
-                      <p className="text-xs">Risk Level: <span className={
-                        location.riskLevel === "Low" ? "text-green-600" :
-                        location.riskLevel === "Medium" ? "text-yellow-600" :
-                        location.riskLevel === "High" ? "text-orange-600" :
-                        "text-red-600"
-                      }>{location.riskLevel} ({(location.risk_level! * 100).toFixed(1)}%)</span></p>
-                      <p className="text-xs">Capacity: {location.capacity?.toFixed(0)}</p>
-                      <p className="text-xs">Status: {location.status}</p>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </Marker>
-            ))}
+                        {location.type === "manufacturer" && (
+                          <circle r={getNodeRadius(4)} fill="#fff" />
+                        )}
+                      </g>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="text-sm">
+                        <p className="font-semibold">{location.name}</p>
+                        <p className="text-xs text-muted-foreground capitalize">
+                          {location.type} | Tier {location.tier}
+                        </p>
+                        <p className="text-xs">Region: {location.region}</p>
+                        <p className="text-xs">Risk Level: <span className={
+                          location.riskLevel === "Low" ? "text-green-600" :
+                          location.riskLevel === "Medium" ? "text-yellow-600" :
+                          location.riskLevel === "High" ? "text-orange-600" :
+                          "text-red-600"
+                        }>{location.riskLevel} ({(location.risk_level! * 100).toFixed(1)}%)</span></p>
+                        <p className="text-xs">Capacity: {location.capacity?.toFixed(0)}</p>
+                        <p className="text-xs">Status: {location.status}</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </Marker>
+              ))}
             </ZoomableGroup>
           </ComposableMap>
         </TooltipProvider>
 
-        {/* Legend */}
         <div className="mt-4 flex flex-wrap gap-4 text-sm">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded-full bg-[#10b981]"></div>

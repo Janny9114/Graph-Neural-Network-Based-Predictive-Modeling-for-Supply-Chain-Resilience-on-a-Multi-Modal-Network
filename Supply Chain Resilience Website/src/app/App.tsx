@@ -16,6 +16,8 @@ import { VulnerableNodesAnalysis } from "./components/VulnerableNodesAnalysis";
 import { NetworkTopologyMetrics } from "./components/NetworkTopologyMetrics";
 import { CascadingFailureHeatmap } from "./components/CascadingFailureHeatmap";
 import { PipelineRunner } from "./components/PipelineRunner";
+import { InitialSetup } from "./components/InitialSetup";
+import { DataManagement } from "./components/DataManagement";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Button } from "./components/ui/button";
 import { 
@@ -29,7 +31,36 @@ import {
 } from "lucide-react";
 
 export default function App() {
+  // Check localStorage for setup completion status on initial load
+  const [setupComplete, setSetupComplete] = useState(() => {
+    const saved = localStorage.getItem('setupComplete');
+    const companyId = localStorage.getItem('company_id');
+    // Show InitialSetup if either setupComplete is not set OR company_id is missing
+    // This ensures "Fresh Start" properly returns to upload page
+    return saved === 'true' && companyId !== null;
+  });
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleString());
+  
+  // Simplified beforeunload - only show save prompt
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const companyId = localStorage.getItem('company_id');
+      const setupComplete = localStorage.getItem('setupComplete');
+      
+      // Only show prompt if user has data
+      if (companyId || setupComplete === 'true') {
+        e.preventDefault();
+        e.returnValue = ''; // Browser shows default "Leave site?" message
+        return '';
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
   const [nodeMetrics, setNodeMetrics] = useState({
     total: 49,
     high: 0,
@@ -44,13 +75,20 @@ export default function App() {
   });
 
   useEffect(() => {
-    fetchNodeMetrics();
-    fetchOverviewMetrics();
-  }, []);
+    // Only fetch if setup is complete
+    if (setupComplete) {
+      fetchNodeMetrics();
+      fetchOverviewMetrics();
+    }
+  }, [setupComplete]);
 
   const fetchNodeMetrics = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/graph');
+      const companyId = localStorage.getItem('company_id');
+      const url = companyId 
+        ? `http://localhost:5000/api/graph?company_id=${companyId}`
+        : 'http://localhost:5000/api/graph';
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.status === 'success') {
@@ -76,7 +114,11 @@ export default function App() {
 
   const fetchOverviewMetrics = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/overview-metrics');
+      const companyId = localStorage.getItem('company_id');
+      const url = companyId 
+        ? `http://localhost:5000/api/overview-metrics?company_id=${companyId}`
+        : 'http://localhost:5000/api/overview-metrics';
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.status === 'success') {
@@ -98,6 +140,21 @@ export default function App() {
     fetchOverviewMetrics();
   };
 
+  const handleSetupComplete = () => {
+    setSetupComplete(true);
+    // Save to localStorage so it persists across page refreshes
+    localStorage.setItem('setupComplete', 'true');
+    // Refresh data after setup
+    fetchNodeMetrics();
+    fetchOverviewMetrics();
+  };
+
+  // Show initial setup page if not completed
+  if (!setupComplete) {
+    return <InitialSetup onComplete={handleSetupComplete} />;
+  }
+
+  // Show main dashboard after setup
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Header */}
@@ -118,6 +175,20 @@ export default function App() {
               <Button variant="outline" size="sm" onClick={handleRefresh}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => {
+                  if (confirm('Reset setup? This will clear all data and return to the upload page.')) {
+                    localStorage.removeItem('setupComplete');
+                    localStorage.removeItem('company_id');
+                    setSetupComplete(false);
+                  }
+                }}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Reset Setup
               </Button>
               <Button size="sm">
                 <Download className="h-4 w-4 mr-2" />
@@ -201,21 +272,6 @@ export default function App() {
               <ModelComparisonTable />
             </div>
 
-            {/* Charts */}
-            <div className="grid gap-6 md:grid-cols-4">
-              <ResilienceChart />
-            </div>
-
-            {/* Secondary Charts */}
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <RiskDistributionChart />
-              <PerformanceMetrics />
-            </div>
-
-            {/* Alerts */}
-            <div className="grid gap-6 md:grid-cols-4">
-              <AlertsPanel />
-            </div>
           </TabsContent>
 
           {/* Nodes Tab */}
@@ -277,10 +333,6 @@ export default function App() {
             <div className="grid gap-6 md:grid-cols-4">
               <CascadingFailureHeatmap />
             </div>
-
-            <div className="grid gap-6 md:grid-cols-4">
-              <AlertsPanel />
-            </div>
           </TabsContent>
 
           {/* Scenarios Tab */}
@@ -295,15 +347,6 @@ export default function App() {
               <ScenarioAnalysis />
             </div>
 
-            {/* Mitigation Planning */}
-            <div className="grid gap-6 md:grid-cols-4">
-              <MitigationPlanning />
-            </div>
-
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <ResilienceChart />
-            </div>
-
             {/* AI Chatbot Assistant */}
             <div className="grid gap-6 md:grid-cols-4">
               <AIChatbot />
@@ -314,6 +357,11 @@ export default function App() {
           <TabsContent value="custom" className="space-y-6">
             <div className="grid gap-6 md:grid-cols-4">
               <CustomGraphUpload />
+            </div>
+            
+            {/* Data Management Section */}
+            <div className="grid gap-6 md:grid-cols-4">
+              <DataManagement />
             </div>
           </TabsContent>
         </Tabs>

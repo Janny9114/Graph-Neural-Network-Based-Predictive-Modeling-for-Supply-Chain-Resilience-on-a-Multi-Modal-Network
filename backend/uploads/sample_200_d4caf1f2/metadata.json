@@ -1,0 +1,17 @@
+{
+  "company_id": "sample_200_d4caf1f2",
+  "company_name": "sample_200",
+  "uploaded_at": "2026-04-24T13:03:41.655090",
+  "stats": {
+    "num_nodes": 200,
+    "num_edges": 378,
+    "tiers": {
+      "0": 60,
+      "1": 50,
+      "3": 50,
+      "2": 40
+    },
+    "avg_capacity": 629.1863405984899,
+    "avg_risk": 0.2505404899464891
+  }
+}

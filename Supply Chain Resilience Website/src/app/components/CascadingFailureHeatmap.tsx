@@ -73,9 +73,11 @@ export function CascadingFailureHeatmap() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(
-        "http://localhost:5000/api/cascading-failure?top_n=10"
-      );
+      const companyId = localStorage.getItem('company_id');
+      const url = companyId 
+        ? `http://localhost:5000/api/cascading-failure?top_n=10&company_id=${companyId}`
+        : 'http://localhost:5000/api/cascading-failure?top_n=10';
+      const res = await fetch(url);
       const json = await res.json();
       if (json.status === "success") {
         setData(json as CascadeData);

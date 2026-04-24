@@ -27,9 +27,38 @@ def generate_tier_sizes(
 
     return [int(base_per_tier * s) for s in tier_scaling]
 
+def assign_regions_by_tier(tier_assignments: List[int], region_names: List[str]) -> List[str]:
+    """
+    Assign regions to nodes based on tier, reflecting real supply chain concentration patterns:
+    - Tier 0 (Raw Materials): Resource-rich regions (Norway, Kenya, India)
+    - Tier 1 (Manufacturing): East Asia manufacturing hubs (China)
+    - Tier 2 (Distribution): North America and Europe distribution centers (US, Netherlands, England)
+    - Tier 3 (Retail): Diverse consumer markets (US, China, Mexico, England)
+    
+    This geographical distribution mirrors actual multinational supply chain footprints,
+    capturing authentic regional dependencies and geopolitical risk exposure.
+    """
+    # Define tier-specific region pools based on real supply chain patterns
+    tier_region_pools = {
+        0: ["Norway", "Kenya", "India", "China 1"],  # Raw material sourcing from resource-rich regions
+        1: ["China 1", "China 2", "India"],  # Manufacturing concentrated in East Asia
+        2: ["United States 1", "Netherlands", "England", "Mexico", "China 2"],  # Distribution in NA/Europe
+        3: ["United States 1", "Netherlands", "England", "Mexico", "Norway", "India"]  # Retail in consumer markets
+    }
+    
+    regions = []
+    for tier in tier_assignments:
+        # Get appropriate region pool for this tier
+        region_pool = tier_region_pools.get(tier, region_names)
+        # Randomly select from tier-appropriate regions
+        regions.append(np.random.choice(region_pool))
+    
+    return regions
+
 def assign_regions(num_nodes: int, region_names: List[str]) -> List[str]:
     """
-    Randomly assign regions to nodes.
+    Randomly assign regions to nodes (legacy function for backward compatibility).
+    For realistic geographical distribution, use assign_regions_by_tier() instead.
     """
     return list(np.random.choice(region_names, size=num_nodes))
 
@@ -171,7 +200,9 @@ def generate_node_features(
     num_nodes: int,
     region_names: List[str]
 ) -> pd.DataFrame:
-    regions = assign_regions(num_nodes, region_names)
+    # Use tier-based region assignment for realistic geographical distribution
+    tier_assignments = [tier_index] * num_nodes
+    regions = assign_regions_by_tier(tier_assignments, region_names)
 
     base_capacity = {
         0: (1000, 200),
@@ -361,13 +392,28 @@ def generate_edge_features(
     for source_node, source_edges in edges_by_source.items():
         num_edges = len(source_edges)
         
+        # ✅ FIX: Account for buffer when calculating available capacity
+        # Get source node's capacity
+        source_capacity = node_df.loc[source_node, 'capacity']
+        
+        # Calculate buffer (15-30% of capacity - reserved inventory)
+        buffer_percentage = np.random.uniform(0.15, 0.30)
+        source_buffer = source_capacity * buffer_percentage
+        
+        # Available capacity = Total capacity - Reserved buffer
+        available_capacity = source_capacity - source_buffer
+        
         # Generate capacity shares using Dirichlet distribution
         # Alpha = 2.0 for all edges (creates similar distribution to Beta(2,5))
         capacity_shares_dirichlet = np.random.dirichlet(alpha=[2.0] * num_edges)
         
-        # Scale to realistic utilization (70-95%)
+        # Scale to realistic utilization (70-95% of AVAILABLE capacity)
         utilization = np.random.uniform(0.70, 0.95)
-        capacity_shares_dirichlet *= utilization
+        capacity_shares_normalized = capacity_shares_dirichlet * utilization
+        
+        # Convert to fraction of TOTAL capacity (for edge features)
+        # This ensures: outgoing_capacity + buffer <= total_capacity
+        capacity_shares_dirichlet = capacity_shares_normalized * (available_capacity / source_capacity)
         
         # Generate other features for each edge from this source
         for idx, (u, v) in enumerate(source_edges):

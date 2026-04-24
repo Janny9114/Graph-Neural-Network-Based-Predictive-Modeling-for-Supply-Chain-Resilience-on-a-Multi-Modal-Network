@@ -121,8 +121,8 @@ class RealisticDisruptionSimulator:
         buffers = {}
         for node in G.nodes():
             base_capacity = G.nodes[node]['capacity']
-            # Base buffer: 30-70% of capacity
-            buffers[node] = base_capacity * np.random.uniform(0.15, 0.25)
+            # Base buffer: 15-30% of capacity
+            buffers[node] = base_capacity * np.random.uniform(0.15, 0.3)
         return buffers
     
     def select_initial_node(self, G, scenario_type='random'):
@@ -168,7 +168,7 @@ class RealisticDisruptionSimulator:
         """
         # Add stochastic variance to buffers (±20%)
         buffers = {
-            node: base_buffers[node] * np.random.uniform(0.8, 1.2)
+            node: base_buffers[node] * np.random.uniform(0.8, 1.1)
             for node in G.nodes()
         }
         
@@ -209,12 +209,12 @@ class RealisticDisruptionSimulator:
             # 2 = Heavily Degraded (30-60% impact remains)
             # 3 = Normal (0% impact - fully operational)
             # NEW (3-class):
-            if remaining_impact == 0:
-                label = 2  # Normal
+            if remaining_impact == 0.0:
+                label = 2  # Normal (fully operational)
             elif impact_ratio < 0.6:
-                label = 1  # Degraded
+                label = 1  # Degraded (some impact, but manageable)
             else:
-                label = 0  # Failed
+                label = 0  # Failed (severe impact)
             
             # Store results
             results[current_node] = {
@@ -243,9 +243,10 @@ class RealisticDisruptionSimulator:
                         # Base impact to this neighbor
                         base_impact_units = remaining_impact * proportion
                         
-                        # Apply stochastic decay factor (0.5 to 1.2)
+                        # Apply stochastic decay factor (0.95 to 1.3)
                         # Models real-world uncertainty (backup suppliers vs panic ordering)
-                        decay_factor = np.random.uniform(0.5, 1.2)
+                        # ✅ FIX: Reduced decay (was 0.7-1.2) to allow more cascading
+                        decay_factor = np.random.uniform(0.7, 1.2)
                         actual_impact_units = base_impact_units * decay_factor
                         
                         # Convert back to percentage for neighbor
@@ -324,12 +325,12 @@ class RealisticDisruptionSimulator:
             # 1 = Lightly Degraded (<30% impact remains)
             # 2 = Heavily Degraded (30-60% impact remains)
             # 3 = Normal (0% impact - fully operational)
-            if remaining_impact == 0:
+            if remaining_impact == 0.0:
                 label = 2  # Normal (fully operational)
             elif impact_ratio < 0.6:
-                label = 1 # Heavily Degraded (30-60% impact)
+                label = 1  # Degraded (some impact, but manageable)
             else:
-                label = 0  # Failed (>60% impact)
+                label = 0  # Failed (severe impact)
             
             # Store results
             is_initial = 1 if current_node in initial_nodes else 0
@@ -360,7 +361,7 @@ class RealisticDisruptionSimulator:
                         base_impact_units = remaining_impact * proportion
                         
                         # Apply stochastic decay factor (0.5 to 1.2)
-                        decay_factor = np.random.uniform(0.5, 1.2)
+                        decay_factor = np.random.uniform(0.7, 1.2)
                         actual_impact_units = base_impact_units * decay_factor
                         
                         # Convert back to percentage for neighbor
@@ -522,7 +523,7 @@ class RealisticDisruptionSimulator:
         Simulate port congestion affecting all downstream nodes.
         Lead time increases propagate through supply chain.
         """
-        num_ports = np.random.randint(1, 4)
+        num_ports = np.random.randint(1, 9)
         port_nodes = self.select_port_nodes(G, num_ports=num_ports)
         port_impacts = [np.random.uniform(0.3, 0.6) for _ in port_nodes]
         

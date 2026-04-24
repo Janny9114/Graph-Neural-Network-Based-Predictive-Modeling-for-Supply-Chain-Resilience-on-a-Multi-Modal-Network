@@ -63,19 +63,27 @@ export function CustomGraphUpload() {
   };
 
   const generateScenarios = async (companyId: string) => {
-    setStatus('Starting scenario generation and model training...');
+    setStatus('Starting complete training pipeline...');
     setProgress(30);
 
     try {
-      const response = await fetch('http://localhost:5000/api/generate-scenarios', {
+      // Use the complete pipeline endpoint instead
+      const response = await fetch('http://localhost:5000/api/run-complete-pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId, num_scenarios: 10000 })
+        body: JSON.stringify({ 
+          company_id: companyId, 
+          num_scenarios: 2000,  // 2000 scenarios for better model accuracy
+          use_default_data: false  // Use uploaded company data
+        })
       });
 
       const data = await response.json();
       
       if (data.status === 'started') {
+        // Store company_id in localStorage for later use
+        localStorage.setItem('company_id', companyId);
+        
         // Poll for progress
         pollProgress(data.task_id, companyId);
       } else {
@@ -91,7 +99,8 @@ export function CustomGraphUpload() {
   const pollProgress = async (taskId: string, companyId: string) => {
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/task-status/${taskId}`);
+        // Use pipeline-status endpoint instead
+        const response = await fetch(`http://localhost:5000/api/pipeline-status/${taskId}`);
         const data = await response.json();
 
         setProgress(data.progress || 0);

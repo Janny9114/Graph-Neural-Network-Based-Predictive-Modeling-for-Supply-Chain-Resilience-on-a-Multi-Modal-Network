@@ -25,7 +25,11 @@ export function ModelComparisonTable() {
   const fetchTrainingResults = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:5000/api/training-results');
+      const companyId = localStorage.getItem('company_id');
+      const url = companyId 
+        ? `http://localhost:5000/api/training-results?company_id=${companyId}`
+        : 'http://localhost:5000/api/training-results';
+      const response = await fetch(url);
       const data = await response.json();
 
       if (data.status === 'success') {

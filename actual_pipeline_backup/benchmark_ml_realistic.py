@@ -23,6 +23,14 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
+# ✅ Add XGBoost
+try:
+    import xgboost as xgb
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+    print("⚠️ Warning: XGBoost not installed. Install with: pip install xgboost")
+
 def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge_features=True, exclude_buffer=False):
     """
     Load all scenario graphs and convert to flat features.
@@ -66,23 +74,31 @@ def load_scenario_data(scenario_dir='scenario_graphs_edge_disruptions', add_edge
             node_features = data.x[labeled_mask].numpy()
             labels = data.y[labeled_mask].numpy()
             
-            # EXCLUDE BUFFER (index 6) if requested
-            if exclude_buffer and node_features.shape[1] > 6:
-                # Keep features [0:6] (capacity, cost_factor, risk_level, reliability, x, y)
-                # Skip feature [6] (buffer)
-                node_features = node_features[:, :6]
-            
-            # ADD EDGE-AWARE FEATURES (1-hop aggregations)
-            if add_edge_features and hasattr(data, 'edge_attr') and data.edge_attr is not None:
-                edge_features = extract_edge_features(data, labeled_mask)
-                # Concatenate node features + edge features
-                features = np.hstack([node_features, edge_features])
-            else:
-                features = node_features
-            
-            all_features.append(features)
-            all_labels.append(labels)
-            all_scenario_ids.extend([i] * len(labels))
+            # ✅ FIX: Filter out -1 labels (unaffected/unlabeled nodes)
+            valid_mask = labels != -1
+            if valid_mask.sum() > 0:
+                node_features = node_features[valid_mask]
+                labels = labels[valid_mask]
+                
+                # EXCLUDE BUFFER (index 6) if requested
+                if exclude_buffer and node_features.shape[1] > 6:
+                    # Keep features [0:6] (capacity, cost_factor, risk_level, reliability, x, y)
+                    # Skip feature [6] (buffer)
+                    node_features = node_features[:, :6]
+                
+                # ADD EDGE-AWARE FEATURES (1-hop aggregations)
+                if add_edge_features and hasattr(data, 'edge_attr') and data.edge_attr is not None:
+                    edge_features = extract_edge_features(data, labeled_mask)
+                    # Filter edge features for valid nodes only
+                    edge_features = edge_features[valid_mask]
+                    # Concatenate node features + edge features
+                    features = np.hstack([node_features, edge_features])
+                else:
+                    features = node_features
+                
+                all_features.append(features)
+                all_labels.append(labels)
+                all_scenario_ids.extend([i] * len(labels))
     
     X = np.vstack(all_features)
     y = np.concatenate(all_labels)
@@ -217,13 +233,59 @@ def train_and_evaluate_model(model, model_name, X_train, y_train, X_test, y_test
 
 
 def benchmark_models(X_train, y_train, X_test, y_test):
-    """Benchmark multiple ML models."""
+    """Benchmark multiple ML models with optimized hyperparameters from Optuna tuning."""
     models = {
-        'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
-        'Random Forest': RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
-        'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, max_depth=5, random_state=42),
-        'SVM (RBF)': SVC(kernel='rbf', random_state=42)
+        'Logistic Regression': LogisticRegression(
+            C=0.0004306814840519144,
+            penalty='l2',
+            solver='saga',
+            max_iter=1000,
+            random_state=42,
+            n_jobs=-1
+        ),
+        'Random Forest': RandomForestClassifier(
+            n_estimators=200,
+            max_depth=10,
+            min_samples_split=12,
+            min_samples_leaf=4,
+            max_features='log2',
+            random_state=42,
+            n_jobs=-1
+        ),
+        'Gradient Boosting': GradientBoostingClassifier(
+            n_estimators=100,
+            max_depth=10,
+            learning_rate=0.08421743584622454,
+            subsample=0.724988952435593,
+            min_samples_split=19,
+            min_samples_leaf=8,
+            max_features=None,
+            random_state=42
+        ),
+        'SVM (RBF)': SVC(
+            C=16.49122306889716,
+            kernel='rbf',
+            gamma='scale',
+            random_state=42
+        )
     }
+    
+    # ✅ Add XGBoost with optimized hyperparameters from Optuna tuning
+    if XGBOOST_AVAILABLE:
+        models['XGBoost'] = xgb.XGBClassifier(
+            n_estimators=150,
+            max_depth=10,
+            learning_rate=0.05220575695531945,
+            subsample=0.9496251112761831,
+            colsample_bytree=0.8446861131299732,
+            gamma=4.4321700548040495,
+            min_child_weight=4,
+            reg_alpha=0.11564156714573964,
+            reg_lambda=1.843885769845944e-08,
+            random_state=42,
+            n_jobs=-1,
+            eval_metric='mlogloss'
+        )
     
     results = []
     for model_name, model in models.items():

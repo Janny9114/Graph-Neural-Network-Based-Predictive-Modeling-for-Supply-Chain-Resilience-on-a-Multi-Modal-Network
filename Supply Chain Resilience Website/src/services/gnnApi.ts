@@ -1,6 +1,7 @@
 const API_BASE_URL = 'http://localhost:5000/api';
 
 export interface DisruptionScenario {
+  company_id?: string;
   disrupted_nodes: number[];
   disrupted_edges: number[][];
   disruption_severity: number;

@@ -41,7 +41,7 @@ export function PipelineRunner() {
       setStatus(null);
 
       const response = await gnnApi.runCompletePipeline({
-        num_scenarios: 1000,
+        num_scenarios: 2000,
         use_default_data: true,
       });
 

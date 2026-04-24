@@ -29,26 +29,192 @@ def allowed_file(filename):
 # Load trained model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Import your model class
+# Import model classes
 import sys
 sys.path.append('C:/Users/janny/Desktop/final_year')
-from train_multi_gnn_realistic import GINEModel
+from train_multi_gnn_realistic import GINEModel, GraphSAGEModel, GATModel, GCNModel, GINModel, TransformerConvModel
 
-# Load model - Match training configuration exactly
-# Training data has 11 features: 6 base + 4 tier + 1 is_disrupted
-# Training uses hidden_channels=256, dropout=0.3 (tuned hyperparameters)
-print("📦 Loading GINE model...")
-model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=256, dropout=0.3, num_classes=3)
-model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/best_gine_model.pt', map_location=device))
-model.to(device)
-model.eval()
-print(f"✅ Model loaded successfully!")
-print(f"   Architecture: in_channels=11, hidden_channels=256, edge_dim=4, num_classes=3")
-print(f"   Device: {device}")
+# Global variables for company-specific data
+current_company_id = None
+current_model = None
+current_node_df = None
+current_edge_df = None
 
-# Load graph data
-node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/synthetic_nodes.csv')
-edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/synthetic_edges.csv')
+def load_company_model(company_id=None):
+    """Load the best GNN model for a specific company."""
+    global current_company_id, current_model, current_node_df, current_edge_df
+    
+    if company_id:
+        # Check both uploads and pipeline_output directories
+        uploads_dir = f'C:/Users/janny/Desktop/final_year/backend/uploads/{company_id}'
+        pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+        
+        # Try uploads directory first (where pipeline saves results)
+        comparison_path = f'{uploads_dir}/model_comparison.csv'
+        if not os.path.exists(comparison_path):
+            comparison_path = f'{pipeline_dir}/model_comparison.csv'
+        
+        if os.path.exists(comparison_path):
+            comparison_df = pd.read_csv(comparison_path)
+            # Find best model by F1 score
+            best_model_row = comparison_df.loc[comparison_df['f1'].idxmax()]
+            best_model_name = best_model_row['model']
+            best_f1 = best_model_row['f1']
+            
+            print(f"📊 Best model for {company_id}: {best_model_name} (F1: {best_f1*100:.2f}%)")
+        else:
+            # Default to GINE if no comparison available
+            best_model_name = 'GINE'
+            print(f"⚠️ No model comparison found, defaulting to GINE")
+        
+        # Try to find model in uploads directory first, then pipeline_output
+        model_filename = f'best_{best_model_name.lower()}_model.pt'
+        model_path = f'{uploads_dir}/{model_filename}'
+        if not os.path.exists(model_path):
+            model_path = f'{pipeline_dir}/{model_filename}'
+        
+        # Check if model exists
+        if not os.path.exists(model_path):
+            print(f"⚠️ Company model not found at {model_path}")
+            print(f"📦 Using default model instead (training not completed yet)")
+            
+            # Load company data
+            if os.path.exists(f'{uploads_dir}/nodes.csv') and os.path.exists(f'{uploads_dir}/edges.csv'):
+                current_node_df = pd.read_csv(f'{uploads_dir}/nodes.csv')
+                current_edge_df = pd.read_csv(f'{uploads_dir}/edges.csv')
+                print(f"✅ Loaded company data from uploads: {company_id}")
+            elif os.path.exists(f'{pipeline_dir}/nodes.csv') and os.path.exists(f'{pipeline_dir}/edges.csv'):
+                current_node_df = pd.read_csv(f'{pipeline_dir}/nodes.csv')
+                current_edge_df = pd.read_csv(f'{pipeline_dir}/edges.csv')
+                print(f"✅ Loaded company data from pipeline_output: {company_id}")
+            else:
+                print(f"⚠️ Company data not found, using default")
+                current_node_df = node_df
+                current_edge_df = edge_df
+            
+            # Load default GINE model
+            default_model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=256, dropout=0.3, num_classes=3)
+            default_model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/best_gine_model.pt', map_location=device))
+            default_model.to(device)
+            default_model.eval()
+            
+            current_company_id = company_id
+            current_model = default_model
+            
+            return default_model, current_node_df, current_edge_df, 'GINE'
+        
+        # Determine which directory has the model
+        company_dir = uploads_dir if os.path.exists(model_path) else pipeline_dir
+        
+        # Load hyperparameters
+        hyperparam_path = f'{company_dir}/{best_model_name.lower()}_best_hyperparameters.json'
+        if os.path.exists(hyperparam_path):
+            with open(hyperparam_path, 'r') as f:
+                hyperparams = json.load(f)
+            print(f"✅ Loaded hyperparameters from {hyperparam_path}")
+            print(f"   hidden_channels: {hyperparams.get('hidden_channels', 'N/A')}")
+            print(f"   dropout: {hyperparams.get('dropout', 'N/A')}")
+        else:
+            # Try to infer from model file
+            print(f"⚠️ Hyperparameters file not found at {hyperparam_path}")
+            print(f"   Attempting to infer from model checkpoint...")
+            
+            checkpoint = torch.load(model_path, map_location='cpu')
+            # Infer hidden_channels from first conv layer weight shape
+            if 'conv1.nn.0.weight' in checkpoint:
+                hidden_channels = checkpoint['conv1.nn.0.weight'].shape[0]
+                print(f"   Inferred hidden_channels: {hidden_channels}")
+            else:
+                hidden_channels = 256  # Default fallback
+                print(f"   Using default hidden_channels: {hidden_channels}")
+            
+            hyperparams = {'hidden_channels': hidden_channels, 'dropout': 0.3}
+        
+        # Detect input channels from checkpoint
+        checkpoint = torch.load(model_path, map_location='cpu')
+        if 'conv1.nn.0.weight' in checkpoint:
+            # GINE model: conv1.nn.0.weight shape is [hidden, in_channels]
+            in_channels = checkpoint['conv1.nn.0.weight'].shape[1]
+        elif 'conv1.lin.weight' in checkpoint:
+            # Alternative: conv1.lin.weight shape is [out, in_channels]
+            in_channels = checkpoint['conv1.lin.weight'].shape[1]
+        elif 'conv1.weight' in checkpoint:
+            # GCN/GraphSAGE: conv1.weight shape varies
+            in_channels = checkpoint['conv1.weight'].shape[1]
+        else:
+            # Default fallback
+            in_channels = 11
+        
+        print(f"   Detected in_channels from checkpoint: {in_channels}")
+        
+        # Initialize model based on type with detected in_channels
+        if best_model_name == 'GINE':
+            model = GINEModel(in_channels=in_channels, edge_dim=4, 
+                            hidden_channels=hyperparams.get('hidden_channels', 256),
+                            dropout=hyperparams.get('dropout', 0.3), num_classes=3)
+        elif best_model_name == 'GraphSAGE':
+            model = GraphSAGEModel(in_channels=in_channels,
+                                  hidden_channels=hyperparams.get('hidden_channels', 256),
+                                  dropout=hyperparams.get('dropout', 0.3), num_classes=3)
+        elif best_model_name == 'GAT':
+            model = GATModel(in_channels=in_channels,
+                           hidden_channels=hyperparams.get('hidden_channels', 256),
+                           dropout=hyperparams.get('dropout', 0.3), num_classes=3)
+        elif best_model_name == 'GCN':
+            model = GCNModel(in_channels=in_channels,
+                           hidden_channels=hyperparams.get('hidden_channels', 256),
+                           dropout=hyperparams.get('dropout', 0.3), num_classes=3)
+        elif best_model_name == 'GIN':
+            model = GINModel(in_channels=in_channels,
+                           hidden_channels=hyperparams.get('hidden_channels', 256),
+                           dropout=hyperparams.get('dropout', 0.3), num_classes=3)
+        elif best_model_name == 'TransformerConv':
+            model = TransformerConvModel(in_channels=in_channels, edge_dim=4,
+                                        hidden_channels=hyperparams.get('hidden_channels', 64),
+                                        num_heads=hyperparams.get('heads', 8),
+                                        dropout=hyperparams.get('dropout', 0.1), num_classes=3)
+        else:
+            raise ValueError(f"Unknown model type: {best_model_name}")
+        
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+        model.eval()
+        
+        # Load company-specific graph data
+        current_node_df = pd.read_csv(f'{company_dir}/nodes.csv')
+        current_edge_df = pd.read_csv(f'{company_dir}/edges.csv')
+        
+        current_company_id = company_id
+        current_model = model
+        
+        print(f"✅ Loaded {best_model_name} model for company {company_id}")
+        print(f"   Nodes: {len(current_node_df)}, Edges: {len(current_edge_df)}")
+        print(f"   Device: {device}")
+        
+        return model, current_node_df, current_edge_df, best_model_name
+    else:
+        # Load default model and data
+        print("📦 Loading default GINE model...")
+        model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=256, dropout=0.3, num_classes=3)
+        model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/best_gine_model.pt', map_location=device))
+        model.to(device)
+        model.eval()
+        
+        node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/synthetic_nodes.csv')
+        edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/synthetic_edges.csv')
+        
+        current_company_id = None
+        current_model = model
+        current_node_df = node_df
+        current_edge_df = edge_df
+        
+        print(f"✅ Default model loaded successfully!")
+        print(f"   Device: {device}")
+        
+        return model, node_df, edge_df, 'GINE'
+
+# Load default model on startup
+model, node_df, edge_df, model_name = load_company_model()
 
 @app.route('/api/predict', methods=['POST'])
 def predict():
@@ -57,6 +223,7 @@ def predict():
     
     Request body:
     {
+        "company_id": "optional_company_id",  # If provided, uses company-specific model
         "disrupted_nodes": [1, 5, 10],  # List of disrupted node IDs
         "disrupted_edges": [[1, 20], [5, 30]],  # List of disrupted edges
         "disruption_severity": 0.8  # 0.0-1.0
@@ -73,11 +240,29 @@ def predict():
             "failed": 45,
             "degraded": 78,
             "normal": 77
+        },
+        "model_info": {
+            "model_name": "GINE",
+            "company_id": "company_xyz"
         }
     }
     """
     try:
+        global current_model, current_node_df, current_edge_df, current_company_id
+        
         data = request.json
+        
+        # Check if company_id is provided and different from current
+        company_id = data.get('company_id')
+        if company_id and company_id != current_company_id:
+            print(f"🔄 Switching to company model: {company_id}")
+            model_used, node_df_used, edge_df_used, model_name_used = load_company_model(company_id)
+        else:
+            # Use currently loaded model
+            model_used = current_model
+            node_df_used = current_node_df
+            edge_df_used = current_edge_df
+            model_name_used = model_name if 'model_name' in globals() else 'GINE'
         
         # Extract disruption info
         disrupted_nodes = data.get('disrupted_nodes', [])
@@ -85,27 +270,33 @@ def predict():
         severity = data.get('disruption_severity', 0.8)
         buffer_capacity = data.get('buffer_capacity', 0.5)  # Default 50%
         
+        print(f"\n🔮 Making prediction with {model_name_used} model")
+        print(f"   Disrupted nodes: {len(disrupted_nodes)}, Severity: {severity}")
+        
         # Create PyG Data object
-        pyg_data = create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity, buffer_capacity)
+        pyg_data = create_pyg_data(node_df_used, edge_df_used, disrupted_nodes, disrupted_edges, severity, buffer_capacity)
         pyg_data = pyg_data.to(device)
         
         # Make prediction
         with torch.no_grad():
-            out = model(pyg_data.x, pyg_data.edge_index, pyg_data.edge_attr)
+            out = model_used(pyg_data.x, pyg_data.edge_index, pyg_data.edge_attr)
             probs = torch.exp(out)  # Convert log_softmax to probabilities
             preds = out.argmax(dim=1)
         
+        # DEBUG: Log prediction distribution
+        print(f"   Predictions: Failed={int((preds==0).sum())}, Degraded={int((preds==1).sum())}, Normal={int((preds==2).sum())}")
+        
         # Format response - Convert all numpy/pandas types to Python native types
         predictions = []
-        for i in range(len(node_df)):
+        for i in range(len(node_df_used)):
             predictions.append({
                 'node_id': int(i),
-                'node_name': str(node_df.iloc[i]['node_id']),
+                'node_name': str(node_df_used.iloc[i]['node_id']),
                 'label': int(preds[i].item()),
                 'label_name': ['Failed', 'Degraded', 'Normal'][int(preds[i].item())],
                 'probability': [float(p) for p in probs[i].cpu().numpy().tolist()],
-                'tier': int(node_df.iloc[i]['tier']),
-                'region': str(node_df.iloc[i]['region'])
+                'tier': int(node_df_used.iloc[i]['tier']),
+                'region': str(node_df_used.iloc[i]['region'])
             })
         
         # Calculate summary - Convert to Python int
@@ -113,12 +304,16 @@ def predict():
             'failed': int((preds == 0).sum().item()),
             'degraded': int((preds == 1).sum().item()),
             'normal': int((preds == 2).sum().item()),
-            'total_nodes': int(len(node_df))
+            'total_nodes': int(len(node_df_used))
         }
         
         return jsonify({
             'predictions': predictions,
             'summary': summary,
+            'model_info': {
+                'model_name': model_name_used,
+                'company_id': company_id or 'default'
+            },
             'status': 'success'
         })
         
@@ -134,41 +329,36 @@ def predict():
 
 
 def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity, buffer_capacity=0.5):
-    """Create PyG Data object from disruption scenario."""
+    """Create PyG Data object MATCHING TRAINING FORMAT EXACTLY."""
     num_nodes = len(node_df)
     
-    # Node features (12 dimensions with buffer) - Make a COPY to avoid modifying original
+    # Base features - DO NOT MODIFY (training doesn't modify them!)
     base_features = torch.tensor(
         node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values,
         dtype=torch.float
-    ).clone()
+    )
     
-    # Apply severity to disrupted nodes - reduce capacity and reliability
-    print(f"🔧 Applying severity {severity} to nodes {disrupted_nodes}")
-    for node_id in disrupted_nodes:
-        print(f"  Node {node_id} BEFORE: capacity={base_features[node_id, 0]:.3f}, reliability={base_features[node_id, 3]:.3f}, risk={base_features[node_id, 2]:.3f}")
-        # Reduce capacity by severity amount
-        base_features[node_id, 0] *= (1.0 - severity)  # capacity
-        # Reduce reliability by severity amount
-        base_features[node_id, 3] *= (1.0 - severity)  # reliability
-        # Increase risk by severity amount
-        base_features[node_id, 2] = min(1.0, base_features[node_id, 2] + severity)  # risk_level
-        print(f"  Node {node_id} AFTER: capacity={base_features[node_id, 0]:.3f}, reliability={base_features[node_id, 3]:.3f}, risk={base_features[node_id, 2]:.3f}")
-    
-    # Tier one-hot encoding
+    # Tier one-hot encoding (4 dimensions)
     tier_encoding = torch.zeros((num_nodes, 4), dtype=torch.float)
     for idx, tier in enumerate(node_df['tier'].values):
         tier_encoding[idx, int(tier)] = 1.0
     
-    # is_initially_disrupted
+    # Concatenate base + tier: 6 + 4 = 10 features
+    base_features_with_tier = torch.cat([base_features, tier_encoding], dim=1)
+    
+    # is_disrupted flag (binary: 0 or 1) - NO SEVERITY!
+    # Training uses ONLY binary flag, not severity value
     is_disrupted = torch.zeros((num_nodes, 1), dtype=torch.float)
     for node_id in disrupted_nodes:
-        is_disrupted[node_id, 0] = severity  # Use severity value instead of just 1.0
+        is_disrupted[int(node_id), 0] = 1.0
     
-    # Concatenate all features: 6 base + 4 tier + 1 is_disrupted = 11 dimensions
-    # Note: buffer_capacity parameter is accepted but not used as a feature (matches training)
-    # Buffer is implicitly represented through capacity feature
-    x = torch.cat([base_features, tier_encoding, is_disrupted], dim=1)
+    # Final concatenation: 10 + 1 = 11 features (matches training!)
+    x = torch.cat([base_features_with_tier, is_disrupted], dim=1)
+    
+    print(f"🔧 Marking {len(disrupted_nodes)} nodes as disrupted (binary flag)")
+    print(f"✅ Feature shape: {x.shape} (should be [num_nodes, 11])")
+    print(f"   Disrupted node IDs: {disrupted_nodes}")
+    print(f"   is_disrupted sum: {is_disrupted.sum().item()}")
     
     # Edge index - Convert to numpy array first to avoid warning
     edge_index = torch.tensor(
@@ -213,24 +403,68 @@ def health():
 
 @app.route('/api/graph', methods=['GET'])
 def get_graph():
-    """Get graph structure for visualization."""
+    """Get graph data for visualization."""
+    # Check if company_id is provided
+    company_id = request.args.get('company_id')
+    
+    # Determine which data to use
+    if company_id and current_company_id == company_id and current_node_df is not None:
+        # Use company-specific data if already loaded
+        node_data = current_node_df
+        edge_data = current_edge_df
+        print(f"✅ Using company-specific graph for {company_id}")
+    elif company_id:
+        # Load company-specific data
+        try:
+            # Try uploads folder first (where upload-graph saves files)
+            uploads_dir = f'C:/Users/janny/Desktop/final_year/backend/uploads/{company_id}'
+            pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+            
+            # Check uploads folder first
+            if os.path.exists(f'{uploads_dir}/nodes.csv') and os.path.exists(f'{uploads_dir}/edges.csv'):
+                node_data = pd.read_csv(f'{uploads_dir}/nodes.csv')
+                edge_data = pd.read_csv(f'{uploads_dir}/edges.csv')
+                print(f"✅ Loaded company graph from uploads: {company_id}")
+            # Then check pipeline_output folder
+            elif os.path.exists(f'{pipeline_dir}/nodes.csv') and os.path.exists(f'{pipeline_dir}/edges.csv'):
+                node_data = pd.read_csv(f'{pipeline_dir}/nodes.csv')
+                edge_data = pd.read_csv(f'{pipeline_dir}/edges.csv')
+                print(f"✅ Loaded company graph from pipeline_output: {company_id}")
+            else:
+                # Fallback to default
+                node_data = node_df
+                edge_data = edge_df
+                print(f"⚠️ Company data not found in uploads or pipeline_output, using default graph")
+                print(f"   Checked: {uploads_dir}")
+                print(f"   Checked: {pipeline_dir}")
+        except Exception as e:
+            print(f"❌ Error loading company data: {e}")
+            node_data = node_df
+            edge_data = edge_df
+    else:
+        # Use default data
+        node_data = node_df
+        edge_data = edge_df
+    
     nodes = []
-    for idx, row in node_df.iterrows():
+    for idx, row in node_data.iterrows():
+        # Handle both 'name' and 'node_id' column names
+        node_name = row.get('name', row.get('node_id', f'Node_{idx}'))
         nodes.append({
             'id': int(idx),
-            'name': row['node_id'],
+            'name': str(node_name),
             'tier': int(row['tier']),
             'region': row['region'],
             'capacity': float(row['capacity']),
-            'risk_level': float(row['risk_level']),
             'reliability': float(row['reliability']),
+            'risk_level': float(row['risk_level']),
             'cost_factor': float(row['cost_factor']),
             'x': float(row['x']),
             'y': float(row['y'])
         })
     
     edges = []
-    for idx, row in edge_df.iterrows():
+    for idx, row in edge_data.iterrows():
         # Use capacity_share if weight column doesn't exist
         weight_value = row.get('weight', row.get('capacity_share', 1.0))
         edges.append({
@@ -250,22 +484,54 @@ def get_graph():
 def get_overview_metrics():
     """Get overview metrics calculated from current graph data."""
     try:
+        # Check if company_id is provided
+        company_id = request.args.get('company_id')
+        
+        # Determine which data to use
+        if company_id and current_company_id == company_id and current_node_df is not None:
+            node_data = current_node_df
+            edge_data = current_edge_df
+            print(f"✅ Using company-specific metrics for {company_id}")
+        elif company_id:
+            try:
+                uploads_dir = f'C:/Users/janny/Desktop/final_year/backend/uploads/{company_id}'
+                pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+                
+                if os.path.exists(f'{uploads_dir}/nodes.csv') and os.path.exists(f'{uploads_dir}/edges.csv'):
+                    node_data = pd.read_csv(f'{uploads_dir}/nodes.csv')
+                    edge_data = pd.read_csv(f'{uploads_dir}/edges.csv')
+                    print(f"✅ Loaded company metrics from uploads: {company_id}")
+                elif os.path.exists(f'{pipeline_dir}/nodes.csv') and os.path.exists(f'{pipeline_dir}/edges.csv'):
+                    node_data = pd.read_csv(f'{pipeline_dir}/nodes.csv')
+                    edge_data = pd.read_csv(f'{pipeline_dir}/edges.csv')
+                    print(f"✅ Loaded company metrics from pipeline_output: {company_id}")
+                else:
+                    node_data = node_df
+                    edge_data = edge_df
+                    print(f"⚠️ Company metrics not found, using default")
+            except Exception as e:
+                print(f"❌ Error loading company metrics: {e}")
+                node_data = node_df
+                edge_data = edge_df
+        else:
+            node_data = node_df
+            edge_data = edge_df
+        
         # Calculate average resilience (reliability)
-        avg_resilience = float(node_df['reliability'].mean() * 100)
+        avg_resilience = float(node_data['reliability'].mean() * 100)
         
         # Calculate average risk level
-        avg_risk = float(node_df['risk_level'].mean() * 100)
+        avg_risk = float(node_data['risk_level'].mean() * 100)
         
         # Calculate average lead time (if available in edges, otherwise estimate)
-        if 'lead_time' in edge_df.columns:
-            avg_lead_time = float(edge_df['lead_time'].mean())
+        if 'lead_time' in edge_data.columns:
+            avg_lead_time = float(edge_data['lead_time'].mean())
         else:
-            # Estimate based on capacity_share (inverse relationship)
             avg_lead_time = float(5.0)  # Default value
         
         # Calculate network density (edges per node)
-        num_nodes = len(node_df)
-        num_edges = len(edge_df)
+        num_nodes = len(node_data)
+        num_edges = len(edge_data)
         network_density = float(num_edges / num_nodes) if num_nodes > 0 else 0.0
         
         return jsonify({
@@ -560,34 +826,107 @@ def task_status(task_id):
 def get_training_results():
     """Get training results from the latest training run."""
     try:
-        # Check multiple locations for training results
-        possible_paths = [
-            # 1. Check uploads directory for custom graphs
-            ('uploads', 'training_metadata.json'),
-            # 2. Check pipeline_output directory
-            ('pipeline_output', 'model_comparison.csv'),
-            # 3. Check root directory
-            ('.', 'pipeline_output/model_comparison.csv')
-        ]
+        company_id = request.args.get('company_id')
         
-        # Try uploads directory first
+        # If company_id provided, check company-specific results first
+        if company_id:
+            # Check uploads directory for pipeline_task results
+            uploads_dir = f'C:/Users/janny/Desktop/final_year/backend/uploads/{company_id}'
+            
+            # Look for pipeline_task_*.json files (most recent)
+            if os.path.exists(uploads_dir):
+                task_files = [f for f in os.listdir(uploads_dir) if f.startswith('pipeline_task_') and f.endswith('.json')]
+                if task_files:
+                    # Sort by modification time, get most recent
+                    task_files.sort(key=lambda f: os.path.getmtime(os.path.join(uploads_dir, f)), reverse=True)
+                    latest_task = os.path.join(uploads_dir, task_files[0])
+                    
+                    with open(latest_task, 'r') as f:
+                        task_data = json.load(f)
+                    
+                    if task_data.get('status') == 'completed' and 'results' in task_data:
+                        results = task_data['results']
+                        print(f"✅ Loaded training results from pipeline task for company: {company_id}")
+                        
+                        return jsonify({
+                            'status': 'success',
+                            'results': results,
+                            'metadata': {
+                                'num_scenarios': task_data.get('num_scenarios'),
+                                'trained_at': task_data.get('completed_at'),
+                                'company_id': company_id,
+                                'task_id': task_data.get('task_id')
+                            }
+                        })
+            
+            # Check for training_metadata.json (legacy format)
+            metadata_path = f'{uploads_dir}/training_metadata.json'
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                
+                results = metadata.get('results', [])
+                print(f"✅ Loaded training results for company: {company_id}")
+                
+                return jsonify({
+                    'status': 'success',
+                    'results': results,
+                    'metadata': {
+                        'num_scenarios': metadata.get('num_scenarios'),
+                        'num_nodes': metadata.get('num_nodes'),
+                        'num_edges': metadata.get('num_edges'),
+                        'trained_at': metadata.get('trained_at'),
+                        'validation_accuracy': metadata.get('validation_accuracy'),
+                        'company_id': company_id
+                    }
+                })
+            
+            # Check pipeline_output directory
+            pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+            comparison_path = f'{pipeline_dir}/model_comparison.csv'
+            
+            if os.path.exists(comparison_path):
+                df = pd.read_csv(comparison_path)
+                results = df.to_dict('records')
+                print(f"✅ Loaded model comparison for company: {company_id}")
+                
+                # Try to load summary.json
+                summary_path = f'{pipeline_dir}/summary.json'
+                metadata = {}
+                if os.path.exists(summary_path):
+                    with open(summary_path, 'r') as f:
+                        summary = json.load(f)
+                        metadata = {
+                            'num_scenarios': summary.get('num_scenarios'),
+                            'num_nodes': summary.get('num_nodes'),
+                            'num_edges': summary.get('num_edges'),
+                            'trained_at': summary.get('timestamp'),
+                            'company_id': company_id
+                        }
+                
+                return jsonify({
+                    'status': 'success',
+                    'results': results,
+                    'metadata': metadata
+                })
+            
+            print(f"⚠️ No training results found for company: {company_id}")
+        
+        # Fallback: Try uploads directory (most recent)
         if os.path.exists(UPLOAD_FOLDER):
             upload_dirs = [d for d in os.listdir(UPLOAD_FOLDER) if os.path.isdir(os.path.join(UPLOAD_FOLDER, d))]
             
             if upload_dirs:
-                # Sort by modification time to get most recent
                 upload_dirs.sort(key=lambda d: os.path.getmtime(os.path.join(UPLOAD_FOLDER, d)), reverse=True)
                 latest_dir = os.path.join(UPLOAD_FOLDER, upload_dirs[0])
-                
-                # Check for training_metadata.json
                 metadata_path = os.path.join(latest_dir, 'training_metadata.json')
                 
                 if os.path.exists(metadata_path):
                     with open(metadata_path, 'r') as f:
                         metadata = json.load(f)
                     
-                    # Extract results
                     results = metadata.get('results', [])
+                    print(f"✅ Loaded training results from latest upload")
                     
                     return jsonify({
                         'status': 'success',
@@ -601,14 +940,14 @@ def get_training_results():
                         }
                     })
         
-        # Try pipeline_output directory
-        pipeline_csv = '../pipeline_output/model_comparison.csv'
+        # Fallback: Try default pipeline_output directory
+        pipeline_csv = 'C:/Users/janny/Desktop/final_year/pipeline_output/model_comparison.csv'
         if os.path.exists(pipeline_csv):
             df = pd.read_csv(pipeline_csv)
             results = df.to_dict('records')
+            print(f"✅ Loaded default training results")
             
-            # Try to load summary.json for metadata
-            summary_path = '../pipeline_output/summary.json'
+            summary_path = 'C:/Users/janny/Desktop/final_year/pipeline_output/summary.json'
             metadata = {}
             if os.path.exists(summary_path):
                 with open(summary_path, 'r') as f:
@@ -651,10 +990,27 @@ def get_network_vulnerability():
     """
     try:
         top_n = int(request.args.get('top_n', 10))
+        company_id = request.args.get('company_id')
+        
+        # Determine which data to use
+        if company_id and current_company_id == company_id and current_node_df is not None:
+            node_data = current_node_df
+            edge_data = current_edge_df
+        elif company_id:
+            try:
+                company_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+                node_data = pd.read_csv(f'{company_dir}/nodes.csv')
+                edge_data = pd.read_csv(f'{company_dir}/edges.csv')
+            except:
+                node_data = node_df
+                edge_data = edge_df
+        else:
+            node_data = node_df
+            edge_data = edge_df
 
         # ── Build an undirected NetworkX graph ──────────────────────────────
         G = nx.Graph()
-        for idx, row in node_df.iterrows():
+        for idx, row in node_data.iterrows():
             G.add_node(
                 int(idx),
                 name=str(row['node_id']),
@@ -665,8 +1021,8 @@ def get_network_vulnerability():
                 capacity=float(row['capacity']),
             )
 
-        weight_col = 'weight' if 'weight' in edge_df.columns else 'capacity_share'
-        for _, row in edge_df.iterrows():
+        weight_col = 'weight' if 'weight' in edge_data.columns else 'capacity_share'
+        for _, row in edge_data.iterrows():
             G.add_edge(
                 int(row['source']),
                 int(row['target']),
@@ -774,13 +1130,32 @@ def get_network_topology():
     - Assortativity: do hubs connect to other hubs?
     """
     try:
+        # Check if company_id is provided
+        company_id = request.args.get('company_id')
+        
+        # Determine which data to use
+        if company_id and current_company_id == company_id and current_node_df is not None:
+            node_data = current_node_df
+            edge_data = current_edge_df
+        elif company_id:
+            try:
+                company_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+                node_data = pd.read_csv(f'{company_dir}/nodes.csv')
+                edge_data = pd.read_csv(f'{company_dir}/edges.csv')
+            except:
+                node_data = node_df
+                edge_data = edge_df
+        else:
+            node_data = node_df
+            edge_data = edge_df
+        
         # Build NetworkX graph
         G = nx.Graph()
-        for idx, row in node_df.iterrows():
+        for idx, row in node_data.iterrows():
             G.add_node(int(idx))
         
-        weight_col = 'weight' if 'weight' in edge_df.columns else 'capacity_share'
-        for _, row in edge_df.iterrows():
+        weight_col = 'weight' if 'weight' in edge_data.columns else 'capacity_share'
+        for _, row in edge_data.iterrows():
             G.add_edge(int(row['source']), int(row['target']), weight=float(row[weight_col]))
         
         num_nodes = G.number_of_nodes()
@@ -869,10 +1244,27 @@ def get_cascading_failure():
     """
     try:
         top_n = int(request.args.get('top_n', 10))
+        company_id = request.args.get('company_id')
+        
+        # Determine which data to use
+        if company_id and current_company_id == company_id and current_node_df is not None:
+            node_data = current_node_df
+            edge_data = current_edge_df
+        elif company_id:
+            try:
+                company_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+                node_data = pd.read_csv(f'{company_dir}/nodes.csv')
+                edge_data = pd.read_csv(f'{company_dir}/edges.csv')
+            except:
+                node_data = node_df
+                edge_data = edge_df
+        else:
+            node_data = node_df
+            edge_data = edge_df
         
         # Build NetworkX graph
         G = nx.Graph()
-        for idx, row in node_df.iterrows():
+        for idx, row in node_data.iterrows():
             G.add_node(
                 int(idx),
                 name=str(row['node_id']),
@@ -880,8 +1272,8 @@ def get_cascading_failure():
                 region=str(row['region'])
             )
         
-        weight_col = 'weight' if 'weight' in edge_df.columns else 'capacity_share'
-        for _, row in edge_df.iterrows():
+        weight_col = 'weight' if 'weight' in edge_data.columns else 'capacity_share'
+        for _, row in edge_data.iterrows():
             G.add_edge(int(row['source']), int(row['target']), weight=float(row[weight_col]))
         
         initial_nodes = G.number_of_nodes()
@@ -1104,6 +1496,86 @@ def trade_restriction_scenario():
             'affected_nodes': affected_node_details,
             'all_nodes_map': all_nodes_map,
             'disrupted_edges': disrupted_edges[:100]  # Limit for performance
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/list-companies', methods=['GET'])
+def list_companies():
+    """List all company directories in uploads folder."""
+    try:
+        if not os.path.exists(app.config['UPLOAD_FOLDER']):
+            return jsonify({
+                'status': 'success',
+                'companies': []
+            })
+        
+        # Get all subdirectories in uploads folder
+        companies = [
+            d for d in os.listdir(app.config['UPLOAD_FOLDER'])
+            if os.path.isdir(os.path.join(app.config['UPLOAD_FOLDER'], d))
+        ]
+        
+        # Sort by modification time (most recent first)
+        companies.sort(
+            key=lambda d: os.path.getmtime(os.path.join(app.config['UPLOAD_FOLDER'], d)),
+            reverse=True
+        )
+        
+        return jsonify({
+            'status': 'success',
+            'companies': companies,
+            'count': len(companies)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/delete-company/<company_id>', methods=['DELETE'])
+def delete_company(company_id):
+    """Delete all company data including uploaded files and trained models."""
+    try:
+        import shutil
+        
+        deleted_items = []
+        
+        # Delete from uploads directory
+        uploads_dir = os.path.join(app.config['UPLOAD_FOLDER'], company_id)
+        if os.path.exists(uploads_dir):
+            shutil.rmtree(uploads_dir)
+            deleted_items.append(f'uploads/{company_id}/')
+            print(f"✅ Deleted uploads directory: {uploads_dir}")
+        
+        # Delete from pipeline_output directory (if exists)
+        pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+        if os.path.exists(pipeline_dir):
+            shutil.rmtree(pipeline_dir)
+            deleted_items.append(f'pipeline_output/{company_id}/')
+            print(f"✅ Deleted pipeline directory: {pipeline_dir}")
+        
+        if not deleted_items:
+            return jsonify({
+                'status': 'error',
+                'message': f'Company {company_id} not found'
+            }), 404
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Successfully deleted all data for company {company_id}',
+            'deleted_items': deleted_items
         })
         
     except Exception as e:
