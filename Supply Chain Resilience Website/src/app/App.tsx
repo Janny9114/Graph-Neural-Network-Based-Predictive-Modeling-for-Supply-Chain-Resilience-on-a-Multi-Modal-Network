@@ -3,7 +3,6 @@ import { RiskMetricsCard } from "./components/RiskMetricsCard";
 import { ResilienceChart } from "./components/ResilienceChart";
 import { SupplierRiskTable } from "./components/SupplierRiskTable";
 import { RiskDistributionChart } from "./components/RiskDistributionChart";
-import { PerformanceMetrics } from "./components/PerformanceMetrics";
 import { AlertsPanel } from "./components/AlertsPanel";
 import { ScenarioAnalysis } from "./components/ScenarioAnalysis";
 import { WorldMapNetwork } from "./components/WorldMapNetwork";
@@ -309,11 +308,6 @@ export default function App() {
 
             <div className="grid gap-6 md:grid-cols-4">
               <SupplierRiskTable />
-            </div>
-
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <PerformanceMetrics />
-              <RiskDistributionChart />
             </div>
           </TabsContent>
 

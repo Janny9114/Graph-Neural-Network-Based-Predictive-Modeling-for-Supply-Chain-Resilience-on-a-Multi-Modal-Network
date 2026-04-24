@@ -1,14 +1,14 @@
 {
-  "timestamp": "2026-04-24T11:02:26.254584",
+  "timestamp": "2026-04-24T21:51:58.889665",
   "num_scenarios": 1000,
   "num_nodes": 200,
   "num_edges": 378,
   "best_gnn": {
     "model": "GraphSAGE",
-    "accuracy": 0.7649722465673386,
-    "precision": 0.7879960929420253,
-    "recall": 0.7649722465673386,
-    "f1": 0.7720602205774579
+    "accuracy": 0.7687700847210049,
+    "precision": 0.7905769409405952,
+    "recall": 0.7687700847210049,
+    "f1": 0.7748981033706814
   },
   "best_ml": {
     "model": "Gradient Boosting",

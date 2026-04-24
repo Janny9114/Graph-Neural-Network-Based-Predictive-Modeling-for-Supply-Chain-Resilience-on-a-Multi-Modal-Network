@@ -39,10 +39,11 @@ current_company_id = None
 current_model = None
 current_node_df = None
 current_edge_df = None
+current_model_name = 'GINE'  # Track the actual model type
 
 def load_company_model(company_id=None):
     """Load the best GNN model for a specific company."""
-    global current_company_id, current_model, current_node_df, current_edge_df
+    global current_company_id, current_model, current_node_df, current_edge_df, current_model_name
     
     if company_id:
         # Check both uploads and pipeline_output directories
@@ -121,13 +122,23 @@ def load_company_model(company_id=None):
             
             checkpoint = torch.load(model_path, map_location='cpu')
             # Infer hidden_channels from first conv layer weight shape
+            hidden_channels = None
             if 'conv1.nn.0.weight' in checkpoint:
+                # GINE/GIN model
                 hidden_channels = checkpoint['conv1.nn.0.weight'].shape[0]
-                print(f"   Inferred hidden_channels: {hidden_channels}")
+            elif 'conv1.lin_l.weight' in checkpoint:
+                # GraphSAGE model
+                hidden_channels = checkpoint['conv1.lin_l.weight'].shape[0]
+            elif 'conv1.lin.weight' in checkpoint:
+                # GAT/TransformerConv model
+                hidden_channels = checkpoint['conv1.lin.weight'].shape[0]
+            elif 'conv1.weight' in checkpoint:
+                # GCN model
+                hidden_channels = checkpoint['conv1.weight'].shape[0]
             else:
-                hidden_channels = 256  # Default fallback
-                print(f"   Using default hidden_channels: {hidden_channels}")
+                hidden_channels = 128  # Default fallback
             
+            print(f"   Inferred hidden_channels: {hidden_channels}")
             hyperparams = {'hidden_channels': hidden_channels, 'dropout': 0.3}
         
         # Detect input channels from checkpoint
@@ -186,6 +197,7 @@ def load_company_model(company_id=None):
         
         current_company_id = company_id
         current_model = model
+        current_model_name = best_model_name  # Update global
         
         print(f"✅ Loaded {best_model_name} model for company {company_id}")
         print(f"   Nodes: {len(current_node_df)}, Edges: {len(current_edge_df)}")
@@ -193,15 +205,29 @@ def load_company_model(company_id=None):
         
         return model, current_node_df, current_edge_df, best_model_name
     else:
-        # Load default model and data
-        print("📦 Loading default GINE model...")
-        model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=256, dropout=0.3, num_classes=3)
-        model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/best_gine_model.pt', map_location=device))
+        # Load default model and data from pipeline_output
+        print("📦 Loading default GINE model from pipeline_output...")
+        
+        # Detect hidden_channels from checkpoint
+        model_path = 'C:/Users/janny/Desktop/final_year/pipeline_output/best_gine_model.pt'
+        checkpoint = torch.load(model_path, map_location='cpu')
+        
+        # Infer hidden_channels from checkpoint
+        if 'conv1.nn.0.weight' in checkpoint:
+            hidden_channels = checkpoint['conv1.nn.0.weight'].shape[0]
+            print(f"   Detected hidden_channels: {hidden_channels}")
+        else:
+            hidden_channels = 128  # Default fallback
+            print(f"   Using default hidden_channels: {hidden_channels}")
+        
+        # Create model with correct architecture
+        model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=hidden_channels, dropout=0.3, num_classes=3)
+        model.load_state_dict(checkpoint)
         model.to(device)
         model.eval()
         
-        node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/synthetic_nodes.csv')
-        edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/synthetic_edges.csv')
+        node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/actual_pipeline_backup/synthetic_nodes.csv')
+        edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/actual_pipeline_backup/synthetic_edges.csv')
         
         current_company_id = None
         current_model = model
@@ -262,7 +288,8 @@ def predict():
             model_used = current_model
             node_df_used = current_node_df
             edge_df_used = current_edge_df
-            model_name_used = model_name if 'model_name' in globals() else 'GINE'
+            # Use the tracked current_model_name global variable
+            model_name_used = current_model_name
         
         # Extract disruption info
         disrupted_nodes = data.get('disrupted_nodes', [])
@@ -279,7 +306,17 @@ def predict():
         
         # Make prediction
         with torch.no_grad():
-            out = model_used(pyg_data.x, pyg_data.edge_index, pyg_data.edge_attr)
+            # Check if model uses edge attributes
+            print(f"   Model type: {model_name_used}")
+            if model_name_used in ['GINE', 'TransformerConv']:
+                # Edge-aware models
+                print(f"   Using edge-aware forward (with edge_attr)")
+                out = model_used(pyg_data.x, pyg_data.edge_index, pyg_data.edge_attr)
+            else:
+                # Non-edge-aware models (GraphSAGE, GAT, GCN, GIN)
+                print(f"   Using non-edge-aware forward (without edge_attr)")
+                out = model_used(pyg_data.x, pyg_data.edge_index)
+            
             probs = torch.exp(out)  # Convert log_softmax to probabilities
             preds = out.argmax(dim=1)
         
@@ -328,15 +365,35 @@ def predict():
         }), 500
 
 
+def z_score_standardization(values):
+    """
+    Apply Z-score standardization (zero mean, unit variance).
+    EXACT SAME FUNCTION AS graph_preprocessing.py
+    """
+    mean = np.mean(values)
+    std = np.std(values)
+    
+    if std == 0:
+        return np.zeros_like(values)
+    
+    return (values - mean) / std
+
+
 def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity, buffer_capacity=0.5):
     """Create PyG Data object MATCHING TRAINING FORMAT EXACTLY."""
     num_nodes = len(node_df)
     
-    # Base features - DO NOT MODIFY (training doesn't modify them!)
-    base_features = torch.tensor(
-        node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values,
-        dtype=torch.float
-    )
+    # Base features - Use EXACT SAME preprocessing as training!
+    # Training uses graph_preprocessing.standardize_node_features()
+    base_features_raw = node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values
+    
+    # Apply Z-score standardization using SAME function as training
+    base_features_normalized = np.zeros_like(base_features_raw)
+    for i in range(base_features_raw.shape[1]):
+        values = base_features_raw[:, i]
+        base_features_normalized[:, i] = z_score_standardization(values)
+    
+    base_features = torch.tensor(base_features_normalized, dtype=torch.float)
     
     # Tier one-hot encoding (4 dimensions)
     tier_encoding = torch.zeros((num_nodes, 4), dtype=torch.float)
@@ -349,8 +406,17 @@ def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity
     # is_disrupted flag (binary: 0 or 1) - NO SEVERITY!
     # Training uses ONLY binary flag, not severity value
     is_disrupted = torch.zeros((num_nodes, 1), dtype=torch.float)
+    
+    # Flag explicitly disrupted nodes
     for node_id in disrupted_nodes:
         is_disrupted[int(node_id), 0] = 1.0
+    
+    # CRITICAL FIX: Flag target nodes of disrupted edges (MATCHES TRAINING!)
+    # Training script does: for edge in disrupted_edges: is_disrupted[edge[1], 0] = 1.0
+    if disrupted_edges:
+        for edge in disrupted_edges:
+            target_node = edge[1]  # Index 1 is the target
+            is_disrupted[int(target_node), 0] = 1.0
     
     # Final concatenation: 10 + 1 = 11 features (matches training!)
     x = torch.cat([base_features_with_tier, is_disrupted], dim=1)
@@ -998,10 +1064,27 @@ def get_network_vulnerability():
             edge_data = current_edge_df
         elif company_id:
             try:
-                company_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
-                node_data = pd.read_csv(f'{company_dir}/nodes.csv')
-                edge_data = pd.read_csv(f'{company_dir}/edges.csv')
-            except:
+                # Check uploads folder first (where upload-graph saves files)
+                uploads_dir = f'C:/Users/janny/Desktop/final_year/backend/uploads/{company_id}'
+                pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+                
+                # Try uploads first
+                if os.path.exists(f'{uploads_dir}/nodes.csv') and os.path.exists(f'{uploads_dir}/edges.csv'):
+                    node_data = pd.read_csv(f'{uploads_dir}/nodes.csv')
+                    edge_data = pd.read_csv(f'{uploads_dir}/edges.csv')
+                    print(f"✅ Loaded company data from uploads: {company_id}")
+                # Then try pipeline_output
+                elif os.path.exists(f'{pipeline_dir}/nodes.csv') and os.path.exists(f'{pipeline_dir}/edges.csv'):
+                    node_data = pd.read_csv(f'{pipeline_dir}/nodes.csv')
+                    edge_data = pd.read_csv(f'{pipeline_dir}/edges.csv')
+                    print(f"✅ Loaded company data from pipeline_output: {company_id}")
+                else:
+                    # Fallback to default
+                    node_data = node_df
+                    edge_data = edge_df
+                    print(f"⚠️ Company data not found, using default")
+            except Exception as e:
+                print(f"❌ Error loading company data: {e}")
                 node_data = node_df
                 edge_data = edge_df
         else:
@@ -1139,10 +1222,27 @@ def get_network_topology():
             edge_data = current_edge_df
         elif company_id:
             try:
-                company_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
-                node_data = pd.read_csv(f'{company_dir}/nodes.csv')
-                edge_data = pd.read_csv(f'{company_dir}/edges.csv')
-            except:
+                # Check uploads folder first (where upload-graph saves files)
+                uploads_dir = f'C:/Users/janny/Desktop/final_year/backend/uploads/{company_id}'
+                pipeline_dir = f'C:/Users/janny/Desktop/final_year/pipeline_output/{company_id}'
+                
+                # Try uploads first
+                if os.path.exists(f'{uploads_dir}/nodes.csv') and os.path.exists(f'{uploads_dir}/edges.csv'):
+                    node_data = pd.read_csv(f'{uploads_dir}/nodes.csv')
+                    edge_data = pd.read_csv(f'{uploads_dir}/edges.csv')
+                    print(f"✅ Loaded company data from uploads: {company_id}")
+                # Then try pipeline_output
+                elif os.path.exists(f'{pipeline_dir}/nodes.csv') and os.path.exists(f'{pipeline_dir}/edges.csv'):
+                    node_data = pd.read_csv(f'{pipeline_dir}/nodes.csv')
+                    edge_data = pd.read_csv(f'{pipeline_dir}/edges.csv')
+                    print(f"✅ Loaded company data from pipeline_output: {company_id}")
+                else:
+                    # Fallback to default
+                    node_data = node_df
+                    edge_data = edge_df
+                    print(f"⚠️ Company data not found, using default")
+            except Exception as e:
+                print(f"❌ Error loading company data: {e}")
                 node_data = node_df
                 edge_data = edge_df
         else:
@@ -1635,7 +1735,7 @@ def run_complete_pipeline():
     """
     try:
         data = request.json or {}
-        num_scenarios = data.get('num_scenarios', 1000)
+        num_scenarios = data.get('num_scenarios', 2000)  # Research/production default
         use_default_data = data.get('use_default_data', True)
         
         # Generate task ID

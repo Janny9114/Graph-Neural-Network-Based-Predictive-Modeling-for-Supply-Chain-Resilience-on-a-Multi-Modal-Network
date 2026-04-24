@@ -377,7 +377,7 @@ def main():
     results = pipeline.run(
         node_path='actual_pipeline_backup/synthetic_nodes.csv',
         edge_path='actual_pipeline_backup/synthetic_edges.csv',
-        num_scenarios=1000,
+        num_scenarios=2000,  # Research/production setting for better accuracy
         scenario_type='node'  # or 'edge' for edge disruptions
     )
     
