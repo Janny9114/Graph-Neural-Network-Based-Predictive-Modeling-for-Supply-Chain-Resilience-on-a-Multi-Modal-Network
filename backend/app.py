@@ -387,11 +387,26 @@ def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity
     node_df_modified = node_df.copy()
     
     # NEW: Modify features of disrupted nodes based on severity (MATCHES TRAINING!)
-    # For edge disruptions, modify target node features
+    
+    # For NODE disruptions, modify node features based on severity
+    if disrupted_nodes:
+        for node_id in disrupted_nodes:
+            # Modify node features based on severity (physical damage):
+            # capacity *= (1 - severity)
+            node_df_modified.loc[node_id, 'capacity'] *= (1 - severity)
+            # reliability *= (1 - severity)
+            node_df_modified.loc[node_id, 'reliability'] *= (1 - severity)
+            # risk_level = min(1.0, risk_level * (1 + severity))
+            node_df_modified.loc[node_id, 'risk_level'] = min(
+                1.0, 
+                node_df_modified.loc[node_id, 'risk_level'] * (1 + severity)
+            )
+    
+    # For EDGE disruptions, modify target node features
     if disrupted_edges:
         for edge in disrupted_edges:
             target = edge[1]
-            # Modify ONLY the initially disrupted node features based on severity:
+            # Modify target node features based on severity (supply shortage):
             # capacity *= (1 - severity)
             node_df_modified.loc[target, 'capacity'] *= (1 - severity)
             # reliability *= (1 - severity)

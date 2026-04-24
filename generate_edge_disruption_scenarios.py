@@ -863,13 +863,34 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             # NEW: Create modified node features based on disruption severity
             scenario_node_features = base_features.clone()
             
-            # Mark initially disrupted nodes
+            # Mark initially disrupted nodes AND modify their features based on severity
             if 'initial_node' in scenario and scenario['initial_node'] is not None:
-                if isinstance(scenario['initial_node'], list):
-                    for node_id in scenario['initial_node']:
-                        is_disrupted[int(node_id), 0] = 1.0
-                else:
-                    is_disrupted[int(scenario['initial_node']), 0] = 1.0
+                initial_nodes = scenario['initial_node'] if isinstance(scenario['initial_node'], list) else [scenario['initial_node']]
+                initial_impacts = scenario.get('initial_impact_pct', [])
+                
+                # Ensure initial_impacts is a list
+                if not isinstance(initial_impacts, list):
+                    initial_impacts = [initial_impacts]
+                
+                for idx, node_id in enumerate(initial_nodes):
+                    node_idx = int(node_id)
+                    is_disrupted[node_idx, 0] = 1.0
+                    
+                    # Get severity for this node (initial_impact_pct)
+                    severity = initial_impacts[idx] if idx < len(initial_impacts) else 0.5
+                    
+                    # Modify node features based on severity (physical damage):
+                    # Feature 0: capacity *= (1 - severity)
+                    scenario_node_features[node_idx, 0] *= (1 - severity)
+                    
+                    # Feature 3: reliability *= (1 - severity)
+                    scenario_node_features[node_idx, 3] *= (1 - severity)
+                    
+                    # Feature 2: risk_level = min(1.0, risk_level * (1 + severity))
+                    scenario_node_features[node_idx, 2] = min(
+                        1.0, 
+                        scenario_node_features[node_idx, 2] * (1 + severity)
+                    )
             
             # For edge disruptions, mark target nodes as disrupted AND modify their features
             if 'disrupted_edges' in scenario and scenario['disrupted_edges'] is not None:
@@ -885,7 +906,7 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                         # Get severity for this edge (default to 0.5 if not found)
                         severity = edge_capacity_reduction.get(edge, 0.5)
                         
-                        # Modify ONLY the initially disrupted node features based on severity:
+                        # Modify target node features based on severity (supply shortage):
                         # Feature 0: capacity *= (1 - severity)
                         scenario_node_features[target_idx, 0] *= (1 - severity)
                         
