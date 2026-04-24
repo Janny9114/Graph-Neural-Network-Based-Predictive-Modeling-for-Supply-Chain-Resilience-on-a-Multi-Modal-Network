@@ -860,6 +860,9 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
             # CRITICAL FIX: Add is_initially_disrupted feature (binary: 0 or 1)
             is_disrupted = torch.zeros((num_nodes, 1), dtype=torch.float)
             
+            # NEW: Create modified node features based on disruption severity
+            scenario_node_features = base_features.clone()
+            
             # Mark initially disrupted nodes
             if 'initial_node' in scenario and scenario['initial_node'] is not None:
                 if isinstance(scenario['initial_node'], list):
@@ -868,15 +871,35 @@ class EdgeDisruptionSimulator(RealisticDisruptionSimulator):
                 else:
                     is_disrupted[int(scenario['initial_node']), 0] = 1.0
             
-            # For edge disruptions, mark target nodes as disrupted
+            # For edge disruptions, mark target nodes as disrupted AND modify their features
             if 'disrupted_edges' in scenario and scenario['disrupted_edges'] is not None:
+                # Get edge_capacity_reduction to extract severity
+                edge_capacity_reduction = scenario.get('edge_capacity_reduction', {})
+                
                 for edge in scenario['disrupted_edges']:
                     if isinstance(edge, tuple) and len(edge) >= 2:
                         target = edge[1]
-                        is_disrupted[int(target), 0] = 1.0
+                        target_idx = int(target)
+                        is_disrupted[target_idx, 0] = 1.0
+                        
+                        # Get severity for this edge (default to 0.5 if not found)
+                        severity = edge_capacity_reduction.get(edge, 0.5)
+                        
+                        # Modify ONLY the initially disrupted node features based on severity:
+                        # Feature 0: capacity *= (1 - severity)
+                        scenario_node_features[target_idx, 0] *= (1 - severity)
+                        
+                        # Feature 3: reliability *= (1 - severity)
+                        scenario_node_features[target_idx, 3] *= (1 - severity)
+                        
+                        # Feature 2: risk_level = min(1.0, risk_level * (1 + severity))
+                        scenario_node_features[target_idx, 2] = min(
+                            1.0, 
+                            scenario_node_features[target_idx, 2] * (1 + severity)
+                        )
             
-            # Concatenate base features with is_initially_disrupted
-            x = torch.cat([base_features, is_disrupted], dim=1)
+            # Concatenate modified features with is_initially_disrupted
+            x = torch.cat([scenario_node_features, is_disrupted], dim=1)
             
             # Initialize labels and mask
             y = torch.full((num_nodes,), -1, dtype=torch.long)

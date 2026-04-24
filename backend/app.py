@@ -383,9 +383,28 @@ def create_pyg_data(node_df, edge_df, disrupted_nodes, disrupted_edges, severity
     """Create PyG Data object MATCHING TRAINING FORMAT EXACTLY."""
     num_nodes = len(node_df)
     
+    # Create a copy of node_df to modify features based on severity
+    node_df_modified = node_df.copy()
+    
+    # NEW: Modify features of disrupted nodes based on severity (MATCHES TRAINING!)
+    # For edge disruptions, modify target node features
+    if disrupted_edges:
+        for edge in disrupted_edges:
+            target = edge[1]
+            # Modify ONLY the initially disrupted node features based on severity:
+            # capacity *= (1 - severity)
+            node_df_modified.loc[target, 'capacity'] *= (1 - severity)
+            # reliability *= (1 - severity)
+            node_df_modified.loc[target, 'reliability'] *= (1 - severity)
+            # risk_level = min(1.0, risk_level * (1 + severity))
+            node_df_modified.loc[target, 'risk_level'] = min(
+                1.0, 
+                node_df_modified.loc[target, 'risk_level'] * (1 + severity)
+            )
+    
     # Base features - Use EXACT SAME preprocessing as training!
     # Training uses graph_preprocessing.standardize_node_features()
-    base_features_raw = node_df[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values
+    base_features_raw = node_df_modified[['capacity', 'cost_factor', 'risk_level', 'reliability', 'x', 'y']].values
     
     # Apply Z-score standardization using SAME function as training
     base_features_normalized = np.zeros_like(base_features_raw)
