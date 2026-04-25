@@ -32,7 +32,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Import model classes
 import sys
 sys.path.append('C:/Users/janny/Desktop/final_year')
-from train_multi_gnn_realistic import GINEModel, GraphSAGEModel, GATModel, GCNModel, GINModel, TransformerConvModel
+sys.path.append('C:/Users/janny/Desktop/final_year/core')
+from core.train_multi_gnn_realistic import GINEModel, GraphSAGEModel, GATModel, GCNModel, GINModel, TransformerConvModel
 
 # Global variables for company-specific data
 current_company_id = None
@@ -95,7 +96,7 @@ def load_company_model(company_id=None):
             
             # Load default GINE model
             default_model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=256, dropout=0.3, num_classes=3)
-            default_model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/best_gine_model.pt', map_location=device))
+            default_model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/models/best_gine_model.pt', map_location=device))
             default_model.to(device)
             default_model.eval()
             
@@ -226,8 +227,8 @@ def load_company_model(company_id=None):
         model.to(device)
         model.eval()
         
-        node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/actual_pipeline_backup/synthetic_nodes.csv')
-        edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/actual_pipeline_backup/synthetic_edges.csv')
+        node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/data/synthetic_nodes.csv')
+        edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/data/synthetic_edges.csv')
         
         current_company_id = None
         current_model = model
@@ -1784,8 +1785,8 @@ def run_complete_pipeline():
         
         # Determine paths
         if use_default_data:
-            node_path = 'C:/Users/janny/Desktop/final_year/actual_pipeline_backup/synthetic_nodes.csv'
-            edge_path = 'C:/Users/janny/Desktop/final_year/actual_pipeline_backup/synthetic_edges.csv'
+            node_path = 'C:/Users/janny/Desktop/final_year/data/synthetic_nodes.csv'
+            edge_path = 'C:/Users/janny/Desktop/final_year/data/synthetic_edges.csv'
             output_dir = 'C:/Users/janny/Desktop/final_year/pipeline_output'
         else:
             company_id = data.get('company_id')
