@@ -1,6 +1,0 @@
-100,000 supply chain disruption events across 5 industries (Automotive, Electronics, Pharmaceuticals, Consumer Goods, Aerospace)
-Tracks disruptions across multi-tier supplier networks (Tier 1-4), not just direct suppliers
-Covers 6 disruption types: Natural disasters, Cyberattacks, Geopolitical issues, Labor strikes, Port congestion, Factory incidents
-Includes severity levels, production impact %, financial losses, and response strategies
-Measures both partial and full recovery timelines
-Features realistic correlations (e.g., backup suppliers → faster recovery, higher severity → permanent supplier changes)

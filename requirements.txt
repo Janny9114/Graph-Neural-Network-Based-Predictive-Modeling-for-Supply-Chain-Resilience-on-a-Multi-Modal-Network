@@ -1,0 +1,106 @@
+# Supply Chain Resilience Platform - Python Dependencies
+# Generated: April 26, 2026
+
+# ============================================================================
+# Core Deep Learning & Graph Neural Networks
+# ============================================================================
+torch==2.0.1
+torch-geometric==2.3.1
+torch-scatter==2.1.1
+torch-sparse==0.6.17
+torch-cluster==1.6.1
+
+# ============================================================================
+# Machine Learning & Data Science
+# ============================================================================
+numpy==1.24.3
+pandas==2.0.3
+scikit-learn==1.3.0
+scipy==1.11.1
+
+# ============================================================================
+# Visualization
+# ============================================================================
+matplotlib==3.7.2
+seaborn==0.12.2
+
+# ============================================================================
+# Network Analysis
+# ============================================================================
+networkx==3.1
+
+# ============================================================================
+# Web Framework (Backend API)
+# ============================================================================
+flask==2.3.2
+flask-cors==4.0.0
+werkzeug==2.3.6
+
+# ============================================================================
+# Progress Bars & Utilities
+# ============================================================================
+tqdm==4.65.0
+
+# ============================================================================
+# Hyperparameter Tuning (Optional)
+# ============================================================================
+optuna==3.2.0
+
+# ============================================================================
+# Testing (Optional)
+# ============================================================================
+pytest==7.4.0
+pytest-cov==4.1.0
+
+# ============================================================================
+# Code Quality (Optional)
+# ============================================================================
+black==23.7.0
+flake8==6.0.0
+pylint==2.17.4
+
+# ============================================================================
+# Documentation (Optional)
+# ============================================================================
+sphinx==7.0.1
+sphinx-rtd-theme==1.2.2
+
+# ============================================================================
+# Additional Utilities
+# ============================================================================
+python-dateutil==2.8.2
+pytz==2023.3
+
+# ============================================================================
+# Installation Instructions
+# ============================================================================
+# 
+# 1. Create virtual environment:
+#    python -m venv venv
+#
+# 2. Activate virtual environment:
+#    Windows: venv\Scripts\activate
+#    Linux/Mac: source venv/bin/activate
+#
+# 3. Install dependencies:
+#    pip install -r requirements.txt
+#
+# 4. For GPU support (CUDA 11.8):
+#    pip install torch==2.0.1+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+#    pip install torch-geometric torch-scatter torch-sparse torch-cluster -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
+#
+# 5. Verify installation:
+#    python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
+#
+# ============================================================================
+# Notes
+# ============================================================================
+#
+# - Python 3.8+ required
+# - CUDA 11.8+ recommended for GPU acceleration
+# - Total install size: ~2-3 GB (with PyTorch GPU)
+# - Installation time: ~5-10 minutes
+#
+# For CPU-only installation, use:
+#   pip install torch==2.0.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
+#
