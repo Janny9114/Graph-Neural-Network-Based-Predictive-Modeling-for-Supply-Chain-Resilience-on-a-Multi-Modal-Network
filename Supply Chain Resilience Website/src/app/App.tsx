@@ -4,11 +4,9 @@ import { ResilienceChart } from "./components/ResilienceChart";
 import { SupplierRiskTable } from "./components/SupplierRiskTable";
 import { RiskDistributionChart } from "./components/RiskDistributionChart";
 import { AlertsPanel } from "./components/AlertsPanel";
-import { ScenarioAnalysis } from "./components/ScenarioAnalysis";
 import { WorldMapNetwork } from "./components/WorldMapNetwork";
 import { WhatIfSimulation } from "./components/WhatIfSimulation";
 import { MitigationPlanning } from "./components/MitigationPlanning";
-import { AIChatbot } from "./components/AIChatbot";
 import { CustomGraphUpload } from "./components/CustomerGraphUpload";
 import { ModelComparisonTable } from "./components/ModelComparisonTable";
 import { VulnerableNodesAnalysis } from "./components/VulnerableNodesAnalysis";
@@ -334,16 +332,6 @@ export default function App() {
             {/* GNN-Based Disruption Simulation - Main Feature with Real Predictions */}
             <div className="grid gap-6 md:grid-cols-4">
               <WhatIfSimulation />
-            </div>
-
-            {/* Risk Scenario Analysis */}
-            <div className="grid gap-6 md:grid-cols-4">
-              <ScenarioAnalysis />
-            </div>
-
-            {/* AI Chatbot Assistant */}
-            <div className="grid gap-6 md:grid-cols-4">
-              <AIChatbot />
             </div>
           </TabsContent>
 
