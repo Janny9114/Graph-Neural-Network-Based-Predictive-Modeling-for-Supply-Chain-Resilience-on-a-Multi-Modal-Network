@@ -1,0 +1,17 @@
+{
+  "company_id": "tech_corp_fc4083fe",
+  "company_name": "Tech corp",
+  "uploaded_at": "2026-04-26T06:42:48.318224",
+  "stats": {
+    "num_nodes": 200,
+    "num_edges": 378,
+    "tiers": {
+      "0": 60,
+      "1": 50,
+      "3": 50,
+      "2": 40
+    },
+    "avg_capacity": 629.1863405984899,
+    "avg_risk": 0.2505404899464891
+  }
+}

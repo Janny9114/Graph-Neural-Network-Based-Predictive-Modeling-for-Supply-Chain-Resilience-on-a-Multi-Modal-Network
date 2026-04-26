@@ -1,0 +1,90 @@
+{
+  "task_id": "d1afb3e1b9184b40a3c899b9332bcb84",
+  "status": "completed",
+  "progress": 100,
+  "message": "Pipeline completed successfully!",
+  "stage": "done",
+  "started_at": "2026-04-26T06:42:48.944295",
+  "num_scenarios": 2000,
+  "use_default_data": false,
+  "completed_at": "2026-04-26T08:38:17.560071",
+  "results": [
+    {
+      "model": "GAT",
+      "accuracy": 0.8461833333333333,
+      "precision": 0.9069617738148821,
+      "recall": 0.8461833333333333,
+      "f1": 0.8658371685396739
+    },
+    {
+      "model": "GCN",
+      "accuracy": 0.8821833333333333,
+      "precision": 0.926252749046386,
+      "recall": 0.8821833333333333,
+      "f1": 0.8959400756411204
+    },
+    {
+      "model": "GraphSAGE",
+      "accuracy": 0.9331166666666667,
+      "precision": 0.9515633880891193,
+      "recall": 0.9331166666666667,
+      "f1": 0.9385271653447562
+    },
+    {
+      "model": "GIN",
+      "accuracy": 0.9325,
+      "precision": 0.9514670741586172,
+      "recall": 0.9325,
+      "f1": 0.9381981473856266
+    },
+    {
+      "model": "TransformerConv",
+      "accuracy": 0.9038666666666667,
+      "precision": 0.9346400749581566,
+      "recall": 0.9038666666666667,
+      "f1": 0.9132221465224992
+    },
+    {
+      "model": "GINE",
+      "accuracy": 0.9434333333333333,
+      "precision": 0.9570558713757139,
+      "recall": 0.9434333333333333,
+      "f1": 0.9474689234313642
+    },
+    {
+      "model": "Logistic Regression",
+      "accuracy": 0.8153833333333333,
+      "precision": 0.6648499802777778,
+      "recall": 0.8153833333333333,
+      "f1": 0.7324623599545856
+    },
+    {
+      "model": "Random Forest",
+      "accuracy": 0.8380333333333333,
+      "precision": 0.8346485722427287,
+      "recall": 0.8380333333333333,
+      "f1": 0.7846024214444318
+    },
+    {
+      "model": "Gradient Boosting",
+      "accuracy": 0.8615,
+      "precision": 0.8467702989741697,
+      "recall": 0.8615,
+      "f1": 0.8306680088927558
+    },
+    {
+      "model": "SVM (RBF)",
+      "accuracy": 0.8390666666666666,
+      "precision": 0.8194661413972057,
+      "recall": 0.8390666666666666,
+      "f1": 0.7907809522356258
+    },
+    {
+      "model": "XGBoost",
+      "accuracy": 0.8564666666666667,
+      "precision": 0.8448451030325874,
+      "recall": 0.8564666666666667,
+      "f1": 0.8211075014146967
+    }
+  ]
+}

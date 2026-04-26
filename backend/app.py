@@ -91,12 +91,24 @@ def load_company_model(company_id=None):
                 print(f"✅ Loaded company data from pipeline_output: {company_id}")
             else:
                 print(f"⚠️ Company data not found, using default")
-                current_node_df = node_df
-                current_edge_df = edge_df
+                # Load default data from the default paths
+                current_node_df = pd.read_csv('C:/Users/janny/Desktop/final_year/data/synthetic_nodes.csv')
+                current_edge_df = pd.read_csv('C:/Users/janny/Desktop/final_year/data/synthetic_edges.csv')
             
-            # Load default GINE model
-            default_model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=256, dropout=0.3, num_classes=3)
-            default_model.load_state_dict(torch.load('C:/Users/janny/Desktop/final_year/models/best_gine_model.pt', map_location=device))
+            # Load default GINE model - detect hidden_channels from checkpoint
+            default_model_path = 'C:/Users/janny/Desktop/final_year/models/best_gine_model.pt'
+            default_checkpoint = torch.load(default_model_path, map_location='cpu')
+            
+            # Infer hidden_channels from checkpoint
+            if 'conv1.nn.0.weight' in default_checkpoint:
+                default_hidden_channels = default_checkpoint['conv1.nn.0.weight'].shape[0]
+                print(f"   Detected default model hidden_channels: {default_hidden_channels}")
+            else:
+                default_hidden_channels = 128  # Fallback
+                print(f"   Using fallback hidden_channels: {default_hidden_channels}")
+            
+            default_model = GINEModel(in_channels=11, edge_dim=4, hidden_channels=default_hidden_channels, dropout=0.3, num_classes=3)
+            default_model.load_state_dict(default_checkpoint)
             default_model.to(device)
             default_model.eval()
             

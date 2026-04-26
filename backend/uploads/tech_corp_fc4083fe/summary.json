@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-04-26T08:38:17.545393",
+  "num_scenarios": 2000,
+  "num_nodes": 200,
+  "num_edges": 378,
+  "best_gnn": {
+    "model": "GINE",
+    "accuracy": 0.9434333333333333,
+    "precision": 0.9570558713757139,
+    "recall": 0.9434333333333333,
+    "f1": 0.9474689234313642
+  },
+  "best_ml": {
+    "model": "Gradient Boosting",
+    "accuracy": 0.8615,
+    "precision": 0.8467702989741697,
+    "recall": 0.8615,
+    "f1": 0.8306680088927558
+  }
+}
